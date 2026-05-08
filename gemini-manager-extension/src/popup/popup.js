@@ -356,7 +356,7 @@ async function refreshCurrentConversation() {
     els.convTurns.textContent = `${data.turns.length} 轮`;
 
     // Set default filename
-    const defaultName = `${formatDateTime(data.timestamp)}_${sanitizeFilename(data.title)}.md`;
+    const defaultName = `${sanitizeFilename(data.title)}.md`;
     if (els.filenameInput) {
       els.filenameInput.value = defaultName;
       els.filenameInput.dataset.default = defaultName;

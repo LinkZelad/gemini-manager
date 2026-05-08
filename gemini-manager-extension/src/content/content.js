@@ -1347,20 +1347,56 @@
       return 'AI Studio Conversation';
     }
 
-    // Gemini title logic
-    let titleEl = document.querySelector(SELECTORS.topBarTitle);
-    if (titleEl) return normalizeText(getNodeText(titleEl));
+    // Generic titles to skip
+    const genericTitles = ['gemini', 'chats', 'chat', '对话', '聊天', '新对话', 'new chat'];
+    function isGenericTitle(t) {
+      return !t || genericTitles.includes(t.toLowerCase().trim());
+    }
 
+    // Gemini title logic
+    // Strategy 1: Top bar conversation title (older Gemini layout)
+    let titleEl = document.querySelector(SELECTORS.topBarTitle);
+    if (titleEl) {
+      const t = normalizeText(getNodeText(titleEl));
+      if (!isGenericTitle(t)) return t;
+    }
+
+    // Strategy 2: Selected/active item in sidebar history
+    const selectedItem = document.querySelector('history-item.selected, history-item .selected, [data-test-id="history-item"].selected');
+    if (selectedItem) {
+      const sTitleEl = queryWithFallback(selectedItem, SELECTORS.conversationTitle, FALLBACK_SELECTORS.conversationTitle);
+      if (sTitleEl) {
+        const t = normalizeText(getNodeText(sTitleEl));
+        if (!isGenericTitle(t)) return t;
+      }
+    }
+    // Also try sidebar links with aria-selected or active class
+    const activeLink = document.querySelector('a[href*="/app/"].selected, a[href*="/app/"][aria-current="page"]');
+    if (activeLink) {
+      const container = activeLink.closest('history-item, div, li, [role="listitem"]');
+      if (container) {
+        const aTitleEl = queryWithFallback(container, SELECTORS.conversationTitle, FALLBACK_SELECTORS.conversationTitle);
+        if (aTitleEl) {
+          const t = normalizeText(getNodeText(aTitleEl));
+          if (!isGenericTitle(t)) return t;
+        }
+      }
+    }
+
+    // Strategy 3: h1 on the page (but skip generic ones)
     const h1 = document.querySelector(SELECTORS.pageTitle);
     if (h1) {
       const text = normalizeText(getNodeText(h1));
-      if (text && text !== 'Gemini') return text;
+      if (!isGenericTitle(text)) return text;
     }
 
-    if (document.title && document.title !== 'Gemini') {
-      return normalizeText(document.title);
+    // Strategy 4: document.title - strip " - Gemini" suffix
+    if (document.title) {
+      let dt = document.title.replace(/\s*[-–—]\s*Gemini\s*$/i, '').trim();
+      if (!isGenericTitle(dt)) return normalizeText(dt);
     }
 
+    // Strategy 5: First user query text as fallback
     const userQueries = queryAllWithFallback(document, SELECTORS.userQuery, FALLBACK_SELECTORS.userQuery);
     if (userQueries.length > 0) {
       const firstUser = userQueries[0];
@@ -1660,7 +1696,7 @@
             includeThoughts: request.includeThoughts !== false,
             imageFolder: request.imageFolder
           });
-          const defaultName = `${formatDateTime(conv.timestamp)}_${sanitizeFilename(conv.title)}.md`;
+          const defaultName = `${sanitizeFilename(conv.title)}.md`;
           const allImages = [];
           conv.turns.forEach((turn, tidx) => {
             if (turn.userImages) turn.userImages.forEach((img) => allImages.push({ ...img, turnIndex: tidx, source: 'user' }));
@@ -1693,7 +1729,7 @@
             includeThoughts: request.includeThoughts !== false,
             imageFolder: request.imageFolder
           });
-          const defaultName = `${formatDateTime(conv.timestamp)}_${sanitizeFilename(conv.title)}.md`;
+          const defaultName = `${sanitizeFilename(conv.title)}.md`;
           const allImages = [];
           conv.turns.forEach((turn, tidx) => {
             if (turn.userImages) turn.userImages.forEach((img) => allImages.push({ ...img, turnIndex: tidx, source: 'user' }));
@@ -1731,7 +1767,7 @@
             conv.turns = conv.turns.filter((_, idx) => selected.has(idx));
           }
           const json = toJSON(conv);
-          const defaultName = `${formatDateTime(conv.timestamp)}_${sanitizeFilename(conv.title)}.json`;
+          const defaultName = `${sanitizeFilename(conv.title)}.json`;
           sendResponse({ success: true, content: json, title: conv.title, defaultFilename: defaultName });
         } catch (err) {
           sendResponse({ success: false, error: err.message });
@@ -1823,7 +1859,7 @@
         const result = toMarkdown(conv);
         const md = result.text;
         const blob = new Blob([md], { type: 'text/markdown' });
-        const defaultName = `${formatDateTime(conv.timestamp)}_${sanitizeFilename(conv.title)}.md`;
+        const defaultName = `${sanitizeFilename(conv.title)}.md`;
 
         // Use Chrome downloads API for save dialog
         chrome.runtime.sendMessage({
