@@ -567,7 +567,8 @@ async function writeObsidianExportToDirectory(response, filename) {
 
 async function exportMarkdown() {
   setExportBusy(true);
-  setExportFeedback('正在导出 Markdown...', 10);
+  const isAIStudio = currentTab && currentTab.url && currentTab.url.includes('aistudio.google.com');
+  setExportFeedback(isAIStudio ? '正在提取 AI Studio 对话（需要较长时间）...' : '正在导出 Markdown...', 10);
   try {
     const directWrite = shouldUseDirectWrite();
     const response = await sendToContent('exportMarkdown', {
@@ -607,7 +608,8 @@ async function exportMarkdown() {
 
 async function exportObsidian() {
   setExportBusy(true);
-  setExportFeedback('正在导出到 Obsidian...', 10);
+  const isAIStudio = currentTab && currentTab.url && currentTab.url.includes('aistudio.google.com');
+  setExportFeedback(isAIStudio ? '正在提取 AI Studio 对话（需要较长时间）...' : '正在导出到 Obsidian...', 10);
   try {
     console.log('[Gemini Manager] exportObsidian: obsidianUseUri =', settings.obsidianUseUri);
     // URI mode embeds images as base64; direct-write mode writes image files instead.

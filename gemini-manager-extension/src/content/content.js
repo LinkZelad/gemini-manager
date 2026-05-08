@@ -829,7 +829,7 @@
 
   // ===== AI Studio Conversation Extraction =====
 
-  const AI_STUDIO_DELAY = 500; // ms to wait after scroll/toggle operations
+  const AI_STUDIO_DELAY = 300; // ms to wait after scroll/toggle operations
 
   const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -901,176 +901,182 @@
       await toggleAIStudioRawMode(true);
     }
 
-    try {
-      // Step 2: Find all chat turns
-      const chatTurns = document.querySelectorAll('ms-chat-turn');
-      console.log(`[Gemini Manager] Found ${chatTurns.length} chat turns in AI Studio`);
+    // Step 2: Find all chat turns
+    const chatTurns = document.querySelectorAll('ms-chat-turn');
+    console.log(`[Gemini Manager] Found ${chatTurns.length} chat turns in AI Studio`);
 
-      const turns = [];
-      const seenUserTexts = new Set();
+    const turns = [];
+    const seenUserTexts = new Set();
 
-      // Step 3: Process each turn (scroll into view first for lazy loading)
-      for (let index = 0; index < chatTurns.length; index++) {
-        const chatTurn = chatTurns[index];
+    // Step 3: Process each turn (scroll into view first for lazy loading)
+    for (let index = 0; index < chatTurns.length; index++) {
+      const chatTurn = chatTurns[index];
 
-        // Scroll turn into view to ensure content is rendered
-        chatTurn.scrollIntoView({ behavior: 'instant', block: 'center' });
-        await sleep(AI_STUDIO_DELAY);
+      // Scroll turn into view to ensure content is rendered
+      chatTurn.scrollIntoView({ behavior: 'instant', block: 'center' });
+      await sleep(AI_STUDIO_DELAY);
 
-        const turnContainer = chatTurn.querySelector('[data-turn-role]');
-        if (!turnContainer) continue;
+      const turnContainer = chatTurn.querySelector('[data-turn-role]');
+      if (!turnContainer) continue;
 
-        const role = turnContainer.getAttribute('data-turn-role');
+      const role = turnContainer.getAttribute('data-turn-role');
 
-        const turn = {
-          index: index,
-          type: 'unknown',
-          userText: null,
-          userTextHtml: null,
-          thoughtText: null,
-          responseText: null,
-          responseHtml: null,
-          responseMarkdown: null,
-          images: [],
-          userImages: []
-        };
+      const turn = {
+        index: index,
+        type: 'unknown',
+        userText: null,
+        userTextHtml: null,
+        thoughtText: null,
+        responseText: null,
+        responseHtml: null,
+        responseMarkdown: null,
+        images: [],
+        userImages: []
+      };
 
-        if (role === 'User') {
-          // In raw mode, ms-text-chunk contains plain text (the user's input)
-          const textChunk = chatTurn.querySelector('ms-text-chunk');
-          const userText = textChunk ? textChunk.innerText.trim() : '';
+      if (role === 'User') {
+        // In raw mode, ms-text-chunk contains plain text (the user's input)
+        const textChunk = chatTurn.querySelector('ms-text-chunk');
+        const userText = textChunk ? textChunk.innerText.trim() : '';
 
-          if (userText && !seenUserTexts.has(userText)) {
-            seenUserTexts.add(userText);
-            turn.userText = userText;
-            turn.userTextHtml = userText;
-          }
+        if (userText && !seenUserTexts.has(userText)) {
+          seenUserTexts.add(userText);
+          turn.userText = userText;
+          turn.userTextHtml = userText;
+        }
 
-          // Extract user images
-          const userImgs = chatTurn.querySelectorAll('img');
-          userImgs.forEach(imgEl => {
-            let src = imgEl.getAttribute('src') || '';
-            if (src.startsWith('data:image/svg') || src.includes('watermark')) return;
-            if (src) {
-              if (!src.startsWith('http') && !src.startsWith('data:') && !src.startsWith('blob:')) {
-                src = src.startsWith('/') ? window.location.origin + src : src;
-              }
-              turn.userImages.push({
-                src: src,
-                alt: imgEl.getAttribute('alt') || '',
-                width: imgEl.getAttribute('width') || '',
-                height: imgEl.getAttribute('height') || ''
-              });
+        // Extract user images
+        const userImgs = chatTurn.querySelectorAll('img');
+        for (const imgEl of userImgs) {
+          let src = imgEl.getAttribute('src') || '';
+          if (src.startsWith('data:image/svg') || src.includes('watermark')) continue;
+          if (src) {
+            // Convert blob URLs immediately while the element is still in view
+            if (src.startsWith('blob:')) {
+              try { src = await blobToDataUrl(src); } catch (e) { /* keep original */ }
+            } else if (!src.startsWith('http') && !src.startsWith('data:')) {
+              src = src.startsWith('/') ? window.location.origin + src : src;
             }
-          });
-
-          // Extract file attachments (ms-file-chunk)
-          const fileChunk = chatTurn.querySelector('ms-file-chunk');
-          if (fileChunk) {
-            const nameSpan = fileChunk.querySelector('span');
-            const fileName = nameSpan ? nameSpan.innerText.trim() : 'attachment';
-            if (!turn.userText) {
-              turn.userText = `[附件: ${fileName}]`;
-              turn.userTextHtml = `[附件: ${fileName}]`;
-            } else {
-              turn.userText += `\n[附件: ${fileName}]`;
-              turn.userTextHtml += `\n[附件: ${fileName}]`;
-            }
-          }
-
-          if (turn.userText) {
-            turn.type = 'user';
-            turns.push(turn);
-          }
-
-        } else if (role === 'Model') {
-          // Extract reasoning/thinking (in expansion panel)
-          // In raw mode, try to expand the thinking panel if it exists
-          const chevronButton = Array.from(chatTurn.querySelectorAll('span')).find(
-            span => span.textContent.trim() === 'chevron_right'
-          );
-          if (chevronButton) {
-            // Click to expand
-            chevronButton.click();
-            await sleep(AI_STUDIO_DELAY);
-
-            const expansionPanel = chatTurn.querySelector('.mat-expansion-panel-body ms-text-chunk');
-            if (expansionPanel) {
-              const reasoningText = expansionPanel.innerText.trim();
-              if (reasoningText) {
-                turn.thoughtText = reasoningText;
-              }
-            }
-
-            // Collapse back
-            chevronButton.click();
-            await sleep(200);
-          }
-
-          // Extract model response text
-          // In raw mode, ms-text-chunk contains the raw markdown text
-          const allTextChunks = chatTurn.querySelectorAll('ms-text-chunk');
-          let responseTextChunk = null;
-          for (const chunk of allTextChunks) {
-            if (!chunk.closest('.mat-expansion-panel-body') && !chunk.closest('mat-expansion-panel')) {
-              responseTextChunk = chunk;
-              break;
-            }
-          }
-
-          if (responseTextChunk) {
-            // In raw mode, innerText gives us the raw markdown directly
-            const rawText = responseTextChunk.innerText.trim();
-            if (rawText) {
-              turn.responseText = rawText;
-              // In raw mode, the text IS markdown already
-              turn.responseMarkdown = rawText;
-              turn.responseHtml = responseTextChunk.innerHTML;
-            }
-
-            // Extract images from model response
-            const imgs = chatTurn.querySelectorAll('img');
-            imgs.forEach(img => {
-              let src = img.getAttribute('src') || '';
-              if (src.includes('watermark') || src.startsWith('data:image/svg')) return;
-              if (src) {
-                if (!src.startsWith('http') && !src.startsWith('data:') && !src.startsWith('blob:')) {
-                  src = src.startsWith('/') ? window.location.origin + src : src;
-                }
-                turn.images.push({
-                  src: src,
-                  alt: img.getAttribute('alt') || '',
-                  width: img.getAttribute('width') || '',
-                  height: img.getAttribute('height') || ''
-                });
-              }
+            turn.userImages.push({
+              src: src,
+              alt: imgEl.getAttribute('alt') || '',
+              width: imgEl.getAttribute('width') || '',
+              height: imgEl.getAttribute('height') || ''
             });
           }
+        }
 
-          if (turn.responseMarkdown || turn.responseText) {
-            turn.type = turn.userText ? 'qa' : 'model';
-            turns.push(turn);
+        // Extract file attachments (ms-file-chunk)
+        const fileChunk = chatTurn.querySelector('ms-file-chunk');
+        if (fileChunk) {
+          const nameSpan = fileChunk.querySelector('span');
+          const fileName = nameSpan ? nameSpan.innerText.trim() : 'attachment';
+          if (!turn.userText) {
+            turn.userText = `[附件: ${fileName}]`;
+            turn.userTextHtml = `[附件: ${fileName}]`;
+          } else {
+            turn.userText += `\n[附件: ${fileName}]`;
+            turn.userTextHtml += `\n[附件: ${fileName}]`;
           }
         }
-      }
 
-      return {
-        title: getConversationTitle(),
-        url: window.location.href,
-        timestamp: new Date().toISOString(),
-        turns: turns
-      };
-    } finally {
-      // Step 4: Restore raw mode to original state
+        if (turn.userText) {
+          turn.type = 'user';
+          turns.push(turn);
+        }
+
+      } else if (role === 'Model') {
+        // Extract reasoning/thinking (in expansion panel)
+        const chevronButton = Array.from(chatTurn.querySelectorAll('span')).find(
+          span => span.textContent.trim() === 'chevron_right'
+        );
+        if (chevronButton) {
+          // Click to expand
+          chevronButton.click();
+          await sleep(AI_STUDIO_DELAY);
+
+          const expansionPanel = chatTurn.querySelector('.mat-expansion-panel-body ms-text-chunk');
+          if (expansionPanel) {
+            const reasoningText = expansionPanel.innerText.trim();
+            if (reasoningText) {
+              turn.thoughtText = reasoningText;
+            }
+          }
+
+          // Collapse back
+          chevronButton.click();
+          await sleep(200);
+        }
+
+        // Extract model response text
+        const allTextChunks = chatTurn.querySelectorAll('ms-text-chunk');
+        let responseTextChunk = null;
+        for (const chunk of allTextChunks) {
+          if (!chunk.closest('.mat-expansion-panel-body') && !chunk.closest('mat-expansion-panel')) {
+            responseTextChunk = chunk;
+            break;
+          }
+        }
+
+        if (responseTextChunk) {
+          // In raw mode, innerText gives us the raw markdown directly
+          const rawText = responseTextChunk.innerText.trim();
+          if (rawText) {
+            turn.responseText = rawText;
+            turn.responseMarkdown = rawText;
+            turn.responseHtml = responseTextChunk.innerHTML;
+          }
+
+          // Extract images from model response
+          const imgs = chatTurn.querySelectorAll('img');
+          for (const img of imgs) {
+            let src = img.getAttribute('src') || '';
+            if (src.includes('watermark') || src.startsWith('data:image/svg')) continue;
+            if (src) {
+              // Convert blob URLs immediately
+              if (src.startsWith('blob:')) {
+                try { src = await blobToDataUrl(src); } catch (e) { /* keep original */ }
+              } else if (!src.startsWith('http') && !src.startsWith('data:')) {
+                src = src.startsWith('/') ? window.location.origin + src : src;
+              }
+              turn.images.push({
+                src: src,
+                alt: img.getAttribute('alt') || '',
+                width: img.getAttribute('width') || '',
+                height: img.getAttribute('height') || ''
+              });
+            }
+          }
+        }
+
+        if (turn.responseMarkdown || turn.responseText) {
+          turn.type = turn.userText ? 'qa' : 'model';
+          turns.push(turn);
+        }
+      }
+    }
+
+    const conversation = {
+      title: getConversationTitle(),
+      url: window.location.href,
+      timestamp: new Date().toISOString(),
+      turns: turns
+    };
+
+    // Step 4: Restore raw mode BEFORE returning (best-effort)
+    try {
       if (!wasRawMode) {
         await toggleAIStudioRawMode(false);
       }
-      // Scroll back to bottom
       const chatContainer = document.querySelector('.chat-turns-container') || document.querySelector('ms-autoscroll-container');
       if (chatContainer) {
         chatContainer.scrollTop = chatContainer.scrollHeight;
       }
+    } catch (restoreErr) {
+      console.warn('[Gemini Manager] Failed to restore AI Studio state:', restoreErr);
     }
+
+    return conversation;
   }
 
   // ===== Gemini Conversation Extraction =====
@@ -1630,9 +1636,13 @@
             if (turn.userImages) turn.userImages.forEach((img) => allImages.push({ ...img, turnIndex: tidx, source: 'user' }));
             if (turn.images) turn.images.forEach((img) => allImages.push({ ...img, turnIndex: tidx, source: 'model' }));
           });
-          sendResponse({ success: true, content: result.text, title: conv.title, defaultFilename: defaultName, images: allImages, imagePrefix: result.imagePrefix });
+          try {
+            sendResponse({ success: true, content: result.text, title: conv.title, defaultFilename: defaultName, images: allImages, imagePrefix: result.imagePrefix });
+          } catch (sendErr) {
+            console.warn('[Gemini Manager] sendResponse failed (port may be closed):', sendErr);
+          }
         } catch (err) {
-          sendResponse({ success: false, error: err.message });
+          try { sendResponse({ success: false, error: err.message }); } catch (e) { /* port closed */ }
         }
       })();
       return true;
@@ -1656,7 +1666,6 @@
           });
 
           let finalMd = result.text;
-          // Embed images as base64 when requested (for Obsidian URI mode)
           if (request.embedImages && allImages.length > 0) {
             const base64Results = await fetchImagesAsBase64(allImages);
             for (const imgResult of base64Results) {
@@ -1665,9 +1674,13 @@
             }
           }
 
-          sendResponse({ success: true, content: finalMd, title: conv.title, defaultFilename: defaultName, images: allImages, imagePrefix: result.imagePrefix });
+          try {
+            sendResponse({ success: true, content: finalMd, title: conv.title, defaultFilename: defaultName, images: allImages, imagePrefix: result.imagePrefix });
+          } catch (sendErr) {
+            console.warn('[Gemini Manager] sendResponse failed (port may be closed):', sendErr);
+          }
         } catch (err) {
-          sendResponse({ success: false, error: err.message });
+          try { sendResponse({ success: false, error: err.message }); } catch (e) { /* port closed */ }
         }
       })();
       return true;
