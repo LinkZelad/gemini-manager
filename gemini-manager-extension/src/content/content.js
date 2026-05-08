@@ -520,7 +520,8 @@
   }
 
   function convertChildren(children, opts, depth) {
-    return children.map(c => convertNode(c, opts, depth)).join('');
+    const arr = Array.isArray(children) ? children : Array.from(children || []);
+    return arr.map(c => convertNode(c, opts, depth)).join('');
   }
 
   function getRawTextContent(node) {
@@ -1086,7 +1087,7 @@
     if (currentSite === SITE.AISTUDIO) {
       return await extractAIStudioConversation();
     }
-    return extractGeminiConversation();
+    return await extractGeminiConversation();
   }
 
   async function extractGeminiConversation() {
