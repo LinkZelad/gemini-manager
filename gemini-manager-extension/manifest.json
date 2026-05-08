@@ -1,0 +1,65 @@
+{
+  "manifest_version": 3,
+  "name": "Gemini Manager",
+  "version": "1.0.0",
+  "description": "Manage, archive and export your Gemini conversations to Obsidian",
+  "permissions": [
+    "activeTab",
+    "contextMenus",
+    "storage",
+    "downloads",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://gemini.google.com/*",
+    "https://lh3.googleusercontent.com/*",
+    "https://lh3.google.com/*",
+    "https://lh3.ggpht.com/*"
+  ],
+  "action": {
+    "default_popup": "src/popup/popup.html",
+    "default_icon": {
+      "16": "src/icons/icon16.png",
+      "48": "src/icons/icon48.png",
+      "128": "src/icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "src/background/background.js"
+  },
+  "options_ui": {
+    "page": "src/options/options.html",
+    "open_in_tab": true
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://gemini.google.com/*"],
+      "js": ["src/content/content.js"],
+      "css": ["src/content/content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "src/icons/icon16.png",
+    "48": "src/icons/icon48.png",
+    "128": "src/icons/icon128.png"
+  },
+  "commands": {
+    "export-markdown": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+M",
+        "mac": "Command+Shift+M"
+      },
+      "description": "导出当前对话为 Markdown"
+    },
+    "export-obsidian": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+O",
+        "mac": "Command+Shift+O"
+      },
+      "description": "导出当前对话到 Obsidian"
+    }
+  },
+  "web_accessible_resources": []
+}

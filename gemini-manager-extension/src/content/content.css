@@ -1,0 +1,60 @@
+/* Gemini Manager - Content Script Styles */
+
+.gm-export-btn {
+  position: fixed;
+  bottom: 80px;
+  right: 24px;
+  z-index: 999999;
+  background: #4285f4;
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 48px;
+  height: 48px;
+  font-size: 20px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.gm-export-btn:hover {
+  transform: scale(1.1);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+}
+
+.gm-toast {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 999999;
+  background: #323232;
+  color: white;
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: system-ui, -apple-system, sans-serif;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  animation: gm-slideIn 0.3s ease-out;
+}
+
+.gm-toast.gm-success {
+  background: #0d9d57;
+}
+
+.gm-toast.gm-error {
+  background: #d93025;
+}
+
+@keyframes gm-slideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}

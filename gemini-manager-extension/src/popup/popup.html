@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gemini Manager</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <div class="logo">
+        <img src="../icons/icon48.png" alt="Gemini Manager" class="logo-img">
+        <h1>Gemini Manager</h1>
+      </div>
+      <div class="status" id="status-badge">等待中</div>
+    </header>
+
+    <!-- Tabs -->
+    <nav class="tabs">
+      <button class="tab-btn active" data-tab="current">当前对话</button>
+      <button class="tab-btn" data-tab="list">对话列表</button>
+      <button class="tab-btn" data-tab="settings">设置</button>
+    </nav>
+
+    <!-- Current Conversation Tab -->
+    <section class="tab-panel active" id="tab-current">
+      <div class="panel-content">
+        <div class="conversation-info" id="current-info">
+          <div class="info-row">
+            <span class="label">标题:</span>
+            <span class="value" id="conv-title">-</span>
+          </div>
+          <div class="info-row">
+            <span class="label">轮次:</span>
+            <span class="value" id="conv-turns">-</span>
+          </div>
+        </div>
+
+        <div class="filename-box">
+          <label class="filename-label">文件名</label>
+          <input type="text" class="filename-input" id="filename-input" placeholder="YYYY-MM-DD_HH-MM-SS_标题.md">
+        </div>
+
+        <div class="actions">
+          <button class="btn btn-primary" id="btn-export-md">
+            <span class="icon">📝</span> 导出 Markdown
+          </button>
+          <button class="btn btn-obsidian" id="btn-export-obsidian">
+            <span class="icon">🏔️</span> 导出到 Obsidian
+          </button>
+          <button class="btn btn-secondary" id="btn-export-json">
+            <span class="icon">📊</span> 导出 JSON
+          </button>
+          <button class="btn btn-archive" id="btn-archive-current">
+            <span class="icon">📦</span> 归档当前对话
+          </button>
+        </div>
+
+        <div class="export-feedback">
+          <div class="export-status" id="export-status" hidden></div>
+          <progress class="export-progress" id="export-progress" value="0" max="100" hidden></progress>
+        </div>
+      </div>
+    </section>
+
+    <!-- Conversation List Tab -->
+    <section class="tab-panel" id="tab-list">
+      <div class="panel-content">
+        <div class="toolbar">
+          <button class="btn btn-sm btn-refresh" id="btn-refresh-list">
+            <span class="icon">🔄</span> 刷新
+          </button>
+          <button class="btn btn-sm btn-secondary" id="btn-export-all">
+            <span class="icon">💾</span> 导出全部
+          </button>
+        </div>
+
+        <div class="filter-bar">
+          <input type="text" class="filter-input" id="filter-input" placeholder="搜索对话...">
+          <select class="filter-select" id="filter-status">
+            <option value="all">全部</option>
+            <option value="active">未归档</option>
+            <option value="archived">已归档</option>
+          </select>
+        </div>
+
+        <div class="conversation-list" id="conversation-list">
+          <div class="empty-state">正在加载对话列表...</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Settings Tab -->
+    <section class="tab-panel" id="tab-settings">
+      <div class="panel-content">
+        <div class="setting-group">
+          <h3>Obsidian 设置</h3>
+          <div class="setting-item">
+            <label for="obsidian-vault">Vault 名称</label>
+            <input type="text" id="obsidian-vault" placeholder="我的知识库">
+          </div>
+          <div class="setting-item">
+            <label for="obsidian-vault-path">下载子目录 (可同步到 Vault)</label>
+            <input type="text" id="obsidian-vault-path" placeholder="GeminiExports">
+          </div>
+          <div class="setting-item">
+            <label for="obsidian-folder">文件夹路径</label>
+            <input type="text" id="obsidian-folder" placeholder="AI对话/Gemini">
+          </div>
+          <div class="setting-item">
+            <label>直接写入 Obsidian 目录</label>
+            <div class="directory-row">
+              <button class="btn btn-sm btn-secondary" id="btn-select-export-dir">
+                打开目录设置
+              </button>
+              <span class="directory-status" id="export-dir-status">未选择目录</span>
+            </div>
+          </div>
+          <div class="setting-item">
+            <label class="checkbox-label">
+              <input type="checkbox" id="use-direct-obsidian-write">
+              <span>优先写入已选择目录</span>
+            </label>
+          </div>
+          <div class="setting-item">
+            <label class="checkbox-label">
+              <input type="checkbox" id="obsidian-use-uri">
+              <span>使用 Obsidian URI 直接打开 (需安装 Obsidian)</span>
+            </label>
+          </div>
+          <div class="setting-item">
+            <label class="checkbox-label">
+              <input type="checkbox" id="obsidian-auto-filename">
+              <span>自动生成文件名 (日期+标题)</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="setting-group">
+          <h3>导出设置</h3>
+          <div class="setting-item">
+            <label for="export-format">默认导出格式</label>
+            <select id="export-format">
+              <option value="markdown">Markdown</option>
+              <option value="obsidian">Obsidian 格式</option>
+              <option value="json">JSON</option>
+            </select>
+          </div>
+          <div class="setting-item">
+            <label class="checkbox-label">
+              <input type="checkbox" id="include-thoughts">
+              <span>包含思考过程 (thoughts)</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="setting-group">
+          <h3>数据管理</h3>
+          <div class="setting-actions">
+            <button class="btn btn-sm btn-danger" id="btn-clear-archived">
+              清空归档数据
+            </button>
+            <button class="btn btn-sm btn-secondary" id="btn-export-storage">
+              导出所有数据
+            </button>
+          </div>
+        </div>
+
+        <div class="setting-group">
+          <button class="btn btn-primary" id="btn-save-settings">保存设置</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <span>Gemini Manager v1.0</span>
+    </footer>
+  </div>
+
+  <script src="popup.js" type="module"></script>
+</body>
+</html>
