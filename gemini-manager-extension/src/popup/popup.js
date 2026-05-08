@@ -53,6 +53,7 @@ const els = {
   btnSaveSettings: document.getElementById('btn-save-settings'),
   btnClearArchived: document.getElementById('btn-clear-archived'),
   btnExportStorage: document.getElementById('btn-export-storage'),
+  enableFolderManagement: document.getElementById('enable-folder-management'),
   // Selective export
   btnToggleSelective: document.getElementById('btn-toggle-selective'),
   turnSelectorPanel: document.getElementById('turn-selector-panel'),
@@ -111,6 +112,9 @@ function applySettingsToUI() {
   els.obsidianAutoFilename.checked = settings.obsidianAutoFilename !== false;
   els.exportFormat.value = settings.defaultFormat || 'markdown';
   els.includeThoughts.checked = settings.includeThoughts !== false;
+  if (els.enableFolderManagement) {
+    els.enableFolderManagement.checked = settings.enableFolderManagement || false;
+  }
   syncExportModeControls();
 }
 
@@ -141,7 +145,7 @@ function setExportFeedback(message, progress = null) {
 
 function setExportBusy(isBusy) {
   [els.btnExportMd, els.btnExportObsidian, els.btnExportJson, els.btnExportAll, els.btnArchiveCurrent,
-   els.btnSelectiveExportMd, els.btnSelectiveExportObsidian, els.btnToggleSelective].forEach((btn) => {
+  els.btnSelectiveExportMd, els.btnSelectiveExportObsidian, els.btnToggleSelective].forEach((btn) => {
     if (btn) btn.disabled = isBusy;
   });
 }
@@ -156,7 +160,8 @@ async function saveSettings() {
     obsidianAutoFilename: els.obsidianAutoFilename.checked,
     defaultFormat: els.exportFormat.value,
     includeThoughts: els.includeThoughts.checked,
-    useSaveDialog: settings.useSaveDialog !== false
+    useSaveDialog: settings.useSaveDialog !== false,
+    enableFolderManagement: els.enableFolderManagement ? els.enableFolderManagement.checked : false
   };
 
   try {

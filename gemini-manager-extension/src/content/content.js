@@ -1853,36 +1853,16 @@
     btn.className = 'gm-export-btn';
     btn.innerHTML = '📥';
     btn.title = 'Gemini Manager: 导出当前对话';
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
       try {
-        const conv = await extractCurrentConversation();
-        const result = toMarkdown(conv);
-        const md = result.text;
-        const blob = new Blob([md], { type: 'text/markdown' });
-        const defaultName = `${sanitizeFilename(conv.title)}.md`;
-
-        // Use Chrome downloads API for save dialog
-        chrome.runtime.sendMessage({
-          action: 'download',
-          content: md,
-          filename: defaultName,
-          mimeType: 'text/markdown'
-        }, (response) => {
-          if (response && response.success) {
-            showToast('导出成功', 'success');
-          } else {
-            // Fallback: direct download
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = defaultName;
-            a.click();
-            URL.revokeObjectURL(url);
-            showToast('已下载: ' + defaultName, 'success');
+        chrome.runtime.sendMessage({ action: 'openPopup' }, (response) => {
+          if (!response || !response.success) {
+            alert('浏览器限制：无法直接打开面板，请点击右上角的扩展图标。');
           }
         });
       } catch (err) {
-        showToast('导出失败: ' + err.message, 'error');
+        alert('浏览器限制：无法直接打开面板，请点击右上角的扩展图标。');
       }
     });
 
@@ -1905,25 +1885,209 @@
     }, 2500);
   }
 
-  // ===== Folder UI Injection (Feature Branch) =====
+  // ===== Folder Management Core =====
 
-  function setupFolderUI() {
-    if (currentSite !== SITE.GEMINI) return; 
-    if (document.getElementById('gm-folder-actions')) return;
+  let folderData = {
+    folders: [], // { id: '...', name: '...', isOpen: true }
+    mappings: {} // { 'conv_id': 'folder_id' }
+  };
 
-    // 寻找侧边栏里的对话链接
-    const sidebar = document.querySelector('mat-sidenav, nav, [role="navigation"]') || document.body;
+  async function loadFolderData() {
+    return new Promise(resolve => {
+      chrome.storage.local.get(['gm_folders', 'gm_folder_mappings'], (result) => {
+        folderData.folders = result.gm_folders || [];
+        folderData.mappings = result.gm_folder_mappings || {};
+        resolve();
+      });
+    });
+  }
+
+  async function saveFolderData() {
+    return new Promise(resolve => {
+      chrome.storage.local.set({
+        gm_folders: folderData.folders,
+        gm_folder_mappings: folderData.mappings
+      }, resolve);
+    });
+  }
+
+  async function createNewFolder() {
+    const name = prompt('请输入新文件夹名称：');
+    if (!name || !name.trim()) return;
+    const newFolder = {
+      id: 'folder_' + Date.now(),
+      name: name.trim(),
+      isOpen: true
+    };
+    folderData.folders.push(newFolder);
+    await saveFolderData();
+    await renderFolderTree();
+  }
+
+  function createChatHTML(item) {
+    const bg = item.isActive ? 'rgba(255,255,255,0.1)' : 'transparent';
+    const fw = item.isActive ? '600' : '400';
+    return `
+      <div class="gm-chat-item" data-id="${item.id}" style="padding: 8px 12px; margin: 2px 0; cursor: pointer; border-radius: 6px; background: ${bg}; color: #e8eaed; font-size: 13px; font-weight: ${fw}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; justify-content: space-between;">
+        <span style="overflow: hidden; text-overflow: ellipsis;">💬 ${item.title}</span>
+        <span class="gm-move-btn" style="font-size: 16px; opacity: 0.5; padding-left: 8px;">⋮</span>
+      </div>
+    `;
+  }
+
+  async function renderFolderTree() {
+    if (!isFolderManagementEnabled || currentSite !== SITE.GEMINI) return;
+    await loadFolderData();
+
+    const sidebar = document.querySelector('mat-sidenav, nav, [role="navigation"], .sidenav') || document.body;
     const chatLinks = Array.from(sidebar.querySelectorAll('a[href*="/app/"]'));
     if (chatLinks.length === 0) return;
 
-    // 找到包含这些聊天记录的顶层列表容器
-    const firstLink = chatLinks[0];
-    const itemContainer = firstLink.closest('history-item, li, [role="listitem"]') || firstLink.parentElement;
-    const listContainer = itemContainer.closest('div[role="list"], nav, ul') || itemContainer.parentElement;
-    
-    if (!listContainer) return;
+    // 提取并隐藏原生历史记录
+    const originalItems = chatLinks.map(link => {
+       const container = link.closest('history-item, li, [role="listitem"]') || link.parentElement;
+       const titleEl = queryWithFallback(container, SELECTORS.conversationTitle, FALLBACK_SELECTORS.conversationTitle) || link;
+       const title = normalizeText(getNodeText(titleEl));
+       const href = link.getAttribute('href');
+       const id = extractConversationId(href);
+       const isActive = link.classList.contains('selected') || container.classList.contains('selected') || link.getAttribute('aria-current') === 'page';
+       
+       // 隐藏原生容器
+       container.style.display = 'none';
 
-    // 创建注入的 UI (适配深色模式的颜色)
+       return { id, title, href, isActive, originalEl: link };
+    });
+
+    let treeContainer = document.getElementById('gm-folder-tree-container');
+    if (!treeContainer) {
+       treeContainer = document.createElement('div');
+       treeContainer.id = 'gm-folder-tree-container';
+       const actions = document.getElementById('gm-folder-actions');
+       if (actions && actions.parentElement) {
+         actions.parentElement.insertBefore(treeContainer, actions.nextSibling);
+       }
+    }
+
+    let html = '';
+    
+    // 渲染文件夹
+    folderData.folders.forEach(folder => {
+       const itemsInFolder = originalItems.filter(item => folderData.mappings[item.id] === folder.id);
+       html += `
+         <div class="gm-folder-group" data-folder-id="${folder.id}">
+           <div class="gm-folder-header" style="padding: 8px 12px; cursor: pointer; color: #e8eaed; font-weight: 500; font-size: 13px; display: flex; align-items: center; border-radius: 6px;">
+             <span style="margin-right: 8px;">${folder.isOpen ? '📂' : '📁'}</span> ${folder.name} <span style="opacity:0.5; margin-left:6px;">(${itemsInFolder.length})</span>
+           </div>
+           <div class="gm-folder-content" style="padding-left: 12px; display: ${folder.isOpen ? 'block' : 'none'};">
+             ${itemsInFolder.map(item => createChatHTML(item)).join('')}
+           </div>
+         </div>
+       `;
+    });
+
+    // 渲染未分类
+    const uncategorizedItems = originalItems.filter(item => !folderData.mappings[item.id]);
+    if (uncategorizedItems.length > 0) {
+       html += `
+         <div class="gm-folder-group">
+           <div class="gm-folder-header" style="padding: 8px 12px; color: #9aa0a6; font-size: 13px; display: flex; align-items: center;">
+             <span style="margin-right: 8px;">📁</span> 未分类记录 <span style="opacity:0.5; margin-left:6px;">(${uncategorizedItems.length})</span>
+           </div>
+           <div class="gm-folder-content" style="padding-left: 12px;">
+             ${uncategorizedItems.map(item => createChatHTML(item)).join('')}
+           </div>
+         </div>
+       `;
+    }
+
+    treeContainer.innerHTML = html;
+
+    // 绑定原生点击事件：当点击我们自定义的列表时，触发原生链接的点击
+    treeContainer.querySelectorAll('.gm-chat-item').forEach(el => {
+       el.addEventListener('click', (e) => {
+         // 防止点击了移动按钮也触发跳转
+         if (e.target.closest('.gm-move-btn')) return;
+         e.preventDefault();
+         const id = el.dataset.id;
+         const original = originalItems.find(item => item.id === id);
+         if (original) original.originalEl.click();
+       });
+    });
+
+    // 绑定移动文件夹的交互 (简单的 Prompt 版，后续可改成菜单)
+    treeContainer.querySelectorAll('.gm-move-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const itemEl = e.target.closest('.gm-chat-item');
+        const chatId = itemEl.dataset.id;
+        
+        let msg = "请选择要把这个对话移动到哪个文件夹：\n\n";
+        msg += "0. [移出文件夹/未分类]\n";
+        folderData.folders.forEach((f, idx) => {
+          msg += `${idx + 1}. ${f.name}\n`;
+        });
+        
+        const choice = prompt(msg);
+        if (choice === null) return;
+        
+        const idx = parseInt(choice) - 1;
+        if (choice === '0') {
+           delete folderData.mappings[chatId];
+        } else if (idx >= 0 && idx < folderData.folders.length) {
+           folderData.mappings[chatId] = folderData.folders[idx].id;
+        } else {
+           alert('无效的选择');
+           return;
+        }
+        await saveFolderData();
+        await renderFolderTree();
+      });
+    });
+
+    // 绑定文件夹折叠交互
+    treeContainer.querySelectorAll('.gm-folder-header').forEach(header => {
+      header.addEventListener('click', async (e) => {
+        const group = e.target.closest('.gm-folder-group');
+        const folderId = group.dataset.folderId;
+        if (!folderId) return; // 未分类不可折叠
+        
+        const folder = folderData.folders.find(f => f.id === folderId);
+        if (folder) {
+          folder.isOpen = !folder.isOpen;
+          await saveFolderData();
+          await renderFolderTree();
+        }
+      });
+    });
+  }
+
+  let isFolderManagementEnabled = false;
+
+  async function setupFolderUI() {
+    console.log('[Gemini Manager] setupFolderUI called. Enabled:', isFolderManagementEnabled, 'Site:', currentSite);
+    if (currentSite !== SITE.GEMINI) return; 
+    
+    if (!isFolderManagementEnabled) {
+      const existing = document.getElementById('gm-folder-actions');
+      if (existing) existing.remove();
+      return;
+    }
+
+    if (document.getElementById('gm-folder-actions')) {
+      console.log('[Gemini Manager] Folder UI already exists.');
+      return;
+    }
+
+    const sidebar = document.querySelector('mat-sidenav, nav, [role="navigation"], .sidenav') || document.body;
+    const chatLinks = Array.from(sidebar.querySelectorAll('a[href*="/app/"]'));
+    console.log('[Gemini Manager] Found chat links in sidebar:', chatLinks.length);
+    
+    if (chatLinks.length === 0) {
+      console.log('[Gemini Manager] Aborting: No chat links found.');
+      return;
+    }
+
     const folderActions = document.createElement('div');
     folderActions.id = 'gm-folder-actions';
     folderActions.style.cssText = 'padding: 8px 16px; margin: 8px 0; border-top: 1px solid rgba(255, 255, 255, 0.1); border-bottom: 1px solid rgba(255, 255, 255, 0.1); display: flex; align-items: center; justify-content: space-between; z-index: 9999;';
@@ -1934,26 +2098,46 @@
         </button>
     `;
 
-    // 尝试插入到 "Chats" 标题附近，或者列表的最顶端
-    const heading = Array.from(listContainer.querySelectorAll('div, span, h2, h3')).find(el => el.textContent.trim() === 'Chats' || el.textContent.trim() === '对话');
-    
-    if (heading && heading.parentElement) {
-      heading.parentElement.insertBefore(folderActions, heading.nextSibling);
+    let targetContainer = null;
+    let insertBeforeEl = null;
+
+    const allSpans = Array.from(sidebar.querySelectorAll('div, span, h2, h3'));
+    const chatsHeading = allSpans.find(el => {
+      const text = el.textContent.trim().toLowerCase();
+      return (text === 'chats' || text === '对话' || text === 'recent' || text === '最近') && !el.querySelector('a');
+    });
+
+    if (chatsHeading && chatsHeading.parentElement) {
+      console.log('[Gemini Manager] Found Chats heading, injecting near it.');
+      targetContainer = chatsHeading.parentElement;
+      insertBeforeEl = chatsHeading.nextSibling;
     } else {
-      listContainer.insertBefore(folderActions, listContainer.firstChild);
+      console.log('[Gemini Manager] Could not find Chats heading, using fallback.');
+      const firstLink = chatLinks[0];
+      targetContainer = firstLink.closest('ul, [role="list"]') || firstLink.parentElement.parentElement;
+      insertBeforeEl = targetContainer ? targetContainer.firstChild : null;
+    }
+
+    if (targetContainer) {
+      targetContainer.insertBefore(folderActions, insertBeforeEl);
+      console.log('[Gemini Manager] Injected successfully via targetContainer.');
+    } else {
+      chatLinks[0].parentElement.insertBefore(folderActions, chatLinks[0]);
+      console.log('[Gemini Manager] Injected successfully via aggressive fallback.');
     }
 
     // 绑定事件
     const btn = document.getElementById('gm-btn-new-folder');
     if (btn) {
-      btn.addEventListener('click', (e) => {
+      btn.addEventListener('click', async (e) => {
         e.preventDefault();
         e.stopPropagation();
-        alert('【Gemini Manager 实验功能】\n\n你点击了新建文件夹！\n注入成功！');
+        await createNewFolder();
       });
     }
 
-    console.log('[Gemini Manager] Folder UI injected into sidebar.');
+    console.log('[Gemini Manager] Folder UI actions injected. Rendering tree...');
+    await renderFolderTree();
   }
 
   // ===== Route Change Detection =====
@@ -1997,8 +2181,30 @@
     createFloatingButton();
     startRouteWatcher();
     
-    // 初次加载尝试注入 UI
-    setTimeout(setupFolderUI, 2000);
+    // 获取插件设置
+    chrome.storage.sync.get('gm_settings', (result) => {
+      if (result && result.gm_settings) {
+        isFolderManagementEnabled = result.gm_settings.enableFolderManagement || false;
+      }
+      // 初次加载尝试注入 UI
+      if (isFolderManagementEnabled) {
+        setTimeout(setupFolderUI, 2000);
+      }
+    });
+
+    // 监听设置变化
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area === 'sync' && changes.gm_settings && changes.gm_settings.newValue) {
+        isFolderManagementEnabled = changes.gm_settings.newValue.enableFolderManagement || false;
+        if (isFolderManagementEnabled) {
+          setupFolderUI();
+        } else {
+          // 清除已注入的 UI
+          const existing = document.getElementById('gm-folder-actions');
+          if (existing) existing.remove();
+        }
+      }
+    });
 
     chrome.runtime.sendMessage({
       action: 'contentScriptReady',

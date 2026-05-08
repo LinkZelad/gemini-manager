@@ -99,6 +99,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
+  if (request.action === 'openPopup') {
+    if (chrome.action && chrome.action.openPopup) {
+      chrome.action.openPopup().catch(err => {
+        console.error('[Gemini Manager] openPopup failed:', err);
+      });
+      sendResponse({ success: true });
+    } else {
+      sendResponse({ success: false, error: 'Not supported' });
+    }
+    return true;
+  }
+
   if (request.action === 'download') {
     downloadContent(request.content, request.filename, request.mimeType)
       .then(() => sendResponse({ success: true }))
