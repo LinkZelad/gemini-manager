@@ -1905,6 +1905,57 @@
     }, 2500);
   }
 
+  // ===== Folder UI Injection (Feature Branch) =====
+
+  function setupFolderUI() {
+    if (currentSite !== SITE.GEMINI) return; 
+    if (document.getElementById('gm-folder-actions')) return;
+
+    // 寻找侧边栏里的对话链接
+    const sidebar = document.querySelector('mat-sidenav, nav, [role="navigation"]') || document.body;
+    const chatLinks = Array.from(sidebar.querySelectorAll('a[href*="/app/"]'));
+    if (chatLinks.length === 0) return;
+
+    // 找到包含这些聊天记录的顶层列表容器
+    const firstLink = chatLinks[0];
+    const itemContainer = firstLink.closest('history-item, li, [role="listitem"]') || firstLink.parentElement;
+    const listContainer = itemContainer.closest('div[role="list"], nav, ul') || itemContainer.parentElement;
+    
+    if (!listContainer) return;
+
+    // 创建注入的 UI (适配深色模式的颜色)
+    const folderActions = document.createElement('div');
+    folderActions.id = 'gm-folder-actions';
+    folderActions.style.cssText = 'padding: 8px 16px; margin: 8px 0; border-top: 1px solid rgba(255, 255, 255, 0.1); border-bottom: 1px solid rgba(255, 255, 255, 0.1); display: flex; align-items: center; justify-content: space-between; z-index: 9999;';
+    folderActions.innerHTML = `
+        <span style="font-size: 13px; font-weight: 500; color: #e8eaed;">📁 分类目录</span>
+        <button id="gm-btn-new-folder" style="background: transparent; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; font-size: 12px; padding: 4px 8px; cursor: pointer; color: #8ab4f8; font-weight: 500;">
+          + 新建
+        </button>
+    `;
+
+    // 尝试插入到 "Chats" 标题附近，或者列表的最顶端
+    const heading = Array.from(listContainer.querySelectorAll('div, span, h2, h3')).find(el => el.textContent.trim() === 'Chats' || el.textContent.trim() === '对话');
+    
+    if (heading && heading.parentElement) {
+      heading.parentElement.insertBefore(folderActions, heading.nextSibling);
+    } else {
+      listContainer.insertBefore(folderActions, listContainer.firstChild);
+    }
+
+    // 绑定事件
+    const btn = document.getElementById('gm-btn-new-folder');
+    if (btn) {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        alert('【Gemini Manager 实验功能】\n\n你点击了新建文件夹！\n注入成功！');
+      });
+    }
+
+    console.log('[Gemini Manager] Folder UI injected into sidebar.');
+  }
+
   // ===== Route Change Detection =====
 
   let lastUrl = location.href;
@@ -1915,6 +1966,7 @@
       console.log('[Gemini Manager] Route changed to', lastUrl);
       setTimeout(() => {
         createFloatingButton();
+        setupFolderUI();
       }, 1500);
     }
   }
@@ -1922,6 +1974,11 @@
   function startRouteWatcher() {
     const routeObserver = new MutationObserver(() => {
       detectRouteChange();
+      
+      // 侧边栏可能是动态渲染的，偶尔检查一下 UI 是否还在
+      if (currentSite === SITE.GEMINI && !document.getElementById('gm-folder-actions')) {
+         setupFolderUI();
+      }
     });
 
     routeObserver.observe(document.querySelector('body'), {
@@ -1939,6 +1996,9 @@
   function init() {
     createFloatingButton();
     startRouteWatcher();
+    
+    // 初次加载尝试注入 UI
+    setTimeout(setupFolderUI, 2000);
 
     chrome.runtime.sendMessage({
       action: 'contentScriptReady',
