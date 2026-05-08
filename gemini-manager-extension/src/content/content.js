@@ -1929,25 +1929,90 @@
     return document.querySelector('mat-sidenav, nav, [role="navigation"], .sidenav, aside');
   }
 
+  function isExtensionContextValid() {
+    try {
+      return !!(chrome && chrome.runtime && chrome.runtime.id);
+    } catch (e) {
+      return false;
+    }
+  }
+
   async function loadFolderData() {
+    if (!isExtensionContextValid()) return;
     return new Promise(resolve => {
-      chrome.storage.local.get(['gm_folders', 'gm_folder_mappings', 'gm_uncategorized_open'], (result) => {
-        folderData.folders = result.gm_folders || [];
-        folderData.mappings = result.gm_folder_mappings || {};
-        folderData.uncategorizedOpen = result.gm_uncategorized_open !== false;
+      try {
+        chrome.storage.local.get(['gm_folders', 'gm_folder_mappings', 'gm_uncategorized_open'], (result) => {
+          if (chrome.runtime.lastError) {
+            console.warn('[Gemini Manager] loadFolderData error:', chrome.runtime.lastError);
+            resolve();
+            return;
+          }
+          folderData.folders = result.gm_folders || [];
+          folderData.mappings = result.gm_folder_mappings || {};
+          folderData.uncategorizedOpen = result.gm_uncategorized_open !== false;
+          resolve();
+        });
+      } catch (e) {
+        console.warn('[Gemini Manager] Extension context lost in loadFolderData');
         resolve();
-      });
+      }
     });
   }
 
   async function saveFolderData() {
+    if (!isExtensionContextValid()) return;
     return new Promise(resolve => {
-      chrome.storage.local.set({
-        gm_folders: folderData.folders,
-        gm_folder_mappings: folderData.mappings,
-        gm_uncategorized_open: folderData.uncategorizedOpen
-      }, resolve);
+      try {
+        chrome.storage.local.set({
+          gm_folders: folderData.folders,
+          gm_folder_mappings: folderData.mappings,
+          gm_uncategorized_open: folderData.uncategorizedOpen
+        }, () => {
+          if (chrome.runtime.lastError) {
+            console.warn('[Gemini Manager] saveFolderData error:', chrome.runtime.lastError);
+          }
+          resolve();
+        });
+      } catch (e) {
+        console.warn('[Gemini Manager] Extension context lost in saveFolderData');
+        resolve();
+      }
     });
+  }
+
+  // 滚动侧边栏列表容器以强制 Gemini 加载所有懒加载的对话
+  async function scrollSidebarToLoadAll() {
+    const sidebar = findSidebarElement();
+    if (!sidebar) return;
+
+    // 找到可滚动的列表容器
+    const scrollable = sidebar.querySelector('[class*="scroll"], [style*="overflow"]') || sidebar;
+    let previousCount = 0;
+    let stableRounds = 0;
+
+    for (let i = 0; i < 20; i++) { // 最多尝试 20 次
+      const links = Array.from(sidebar.querySelectorAll('a[href*="/app/"]')).filter(
+        l => !l.closest('#gm-folder-tree-container') && !l.closest('#gm-folder-actions')
+      );
+      if (links.length === previousCount) {
+        stableRounds++;
+        if (stableRounds >= 3) break; // 连续 3 次数量不变则认为已全部加载
+      } else {
+        stableRounds = 0;
+        previousCount = links.length;
+      }
+
+      // 滚动最后一个链接所在的容器
+      if (links.length > 0) {
+        const lastLink = links[links.length - 1];
+        lastLink.scrollIntoView({ behavior: 'instant', block: 'end' });
+      }
+      await new Promise(r => setTimeout(r, 300));
+    }
+
+    // 滚动回顶部
+    const firstLink = sidebar.querySelector('a[href*="/app/"]');
+    if (firstLink) firstLink.scrollIntoView({ behavior: 'instant', block: 'start' });
   }
 
   async function createNewFolder() {
@@ -1974,8 +2039,11 @@
     `;
   }
 
+  let isScrollingToLoad = false;
+
   async function renderFolderTree() {
     if (!isFolderManagementEnabled || currentSite !== SITE.GEMINI) return;
+    if (!isExtensionContextValid()) return;
     await loadFolderData();
 
     const sidebar = findSidebarElement();
@@ -2231,7 +2299,9 @@
       });
     }
 
-    console.log('[Gemini Manager] Folder UI actions injected. Rendering tree...');
+    console.log('[Gemini Manager] Folder UI actions injected. Loading all sidebar items...');
+    // 先滚动加载所有懒加载的对话，再渲染树
+    await scrollSidebarToLoadAll();
     await renderFolderTree();
     // 启动侧边栏链接监听，确保后面慢加载的链接也能进入树
     watchSidebarLinks();
