@@ -1361,7 +1361,8 @@
       if (!isGenericTitle(t)) return t;
     }
 
-    // Strategy 2: Selected/active item in sidebar history
+    // Strategy 2: Selected/active item in sidebar history (including our hidden originals)
+    // Note: we look inside hidden elements too, since folder mode hides native items
     const selectedItem = document.querySelector('history-item.selected, history-item .selected, [data-test-id="history-item"].selected');
     if (selectedItem) {
       const sTitleEl = queryWithFallback(selectedItem, SELECTORS.conversationTitle, FALLBACK_SELECTORS.conversationTitle);
@@ -1380,6 +1381,20 @@
           const t = normalizeText(getNodeText(aTitleEl));
           if (!isGenericTitle(t)) return t;
         }
+      }
+    }
+
+    // Strategy 2b: If folder management is on, the active link text from gm tree (stored in our custom items)
+    const activeGmItem = document.querySelector('#gm-folder-tree-container .gm-chat-item[data-id]');
+    if (activeGmItem) {
+      // Find the active item — the one whose underlying link has aria-current
+      const allLinks = Array.from(document.querySelectorAll('a[href*="/app/"]'));
+      const activeNativeLink = allLinks.find(l => l.getAttribute('aria-current') === 'page' || l.classList.contains('selected'));
+      if (activeNativeLink) {
+        const container = activeNativeLink.closest('history-item, div, li, [role="listitem"]') || activeNativeLink.parentElement;
+        const aTitleEl = queryWithFallback(container, SELECTORS.conversationTitle, FALLBACK_SELECTORS.conversationTitle) || container;
+        const t = normalizeText(getNodeText(aTitleEl));
+        if (!isGenericTitle(t)) return t;
       }
     }
 
@@ -2175,11 +2190,33 @@
 
     console.log('[Gemini Manager] Folder UI actions injected. Rendering tree...');
     await renderFolderTree();
+    // 启动侧边栏链接监听，确保后面慢加载的链接也能进入树
+    watchSidebarLinks();
   }
 
   // ===== Route Change Detection =====
 
   let lastUrl = location.href;
+  let sidebarLinkCount = 0;
+  let sidebarObserver = null;
+
+  // 监听侧边栏链接数量变化，一旦发现新链接就重新渲染树状目录
+  function watchSidebarLinks() {
+    if (!isFolderManagementEnabled || currentSite !== SITE.GEMINI) return;
+    if (sidebarObserver) { sidebarObserver.disconnect(); sidebarObserver = null; }
+
+    const sidebar = document.querySelector('mat-sidenav, nav, [role="navigation"], .sidenav') || document.body;
+    sidebarObserver = new MutationObserver(() => {
+      const links = sidebar.querySelectorAll('a[href*="/app/"]');
+      if (links.length !== sidebarLinkCount) {
+        sidebarLinkCount = links.length;
+        // 流量控制：等 300ms 再渲染，防止频繁触发
+        clearTimeout(sidebarObserver._debounce);
+        sidebarObserver._debounce = setTimeout(() => renderFolderTree(), 300);
+      }
+    });
+    sidebarObserver.observe(sidebar, { childList: true, subtree: true });
+  }
 
   function detectRouteChange() {
     if (location.href !== lastUrl) {
