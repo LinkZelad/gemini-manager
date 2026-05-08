@@ -521,11 +521,12 @@ async function imageToBlob(img) {
   return await (await fetch(item.dataUrl)).blob();
 }
 
-async function writeImagesToDirectory(dirHandle, images) {
+async function writeImagesToDirectory(dirHandle, images, imagePrefix) {
   const failures = [];
   for (let idx = 0; idx < (images || []).length; idx++) {
     const img = images[idx];
-    const imgName = `image_${String(idx + 1).padStart(2, '0')}.png`;
+    const prefix = imagePrefix ? `${imagePrefix}_` : '';
+    const imgName = `${prefix}image_${String(idx + 1).padStart(2, '0')}.png`;
     try {
       const blob = await imageToBlob(img);
       const fileHandle = await dirHandle.getFileHandle(imgName, { create: true });
@@ -554,7 +555,7 @@ async function writeObsidianExportToDirectory(response, filename) {
 
   const targetDir = await getOrCreateDirectory(exportDirectoryHandle, getSafePathParts(settings.obsidianFolder));
   const imageDir = await getOrCreateDirectory(targetDir, response.images && response.images.length > 0 ? [DIRECT_IMAGE_FOLDER] : []);
-  const imageFailures = await writeImagesToDirectory(imageDir, response.images || []);
+  const imageFailures = await writeImagesToDirectory(imageDir, response.images || [], response.imagePrefix);
   await writeTextFileToDirectory(targetDir, filename, response.content, 'text/markdown');
   if (imageFailures.length > 0) {
     showToast(`笔记已写入，${imageFailures.length} 张图片失败`, 'error');
@@ -587,7 +588,7 @@ async function exportMarkdown() {
     // Download images first
     if (response.images && response.images.length > 0) {
       setExportFeedback('正在下载图片...', 65);
-      await downloadImages(response.images, filename);
+      await downloadImages(response.images, filename, response.imagePrefix);
     }
 
     setExportFeedback('正在保存 Markdown...', 85);
@@ -642,7 +643,7 @@ async function exportObsidian() {
       const downloadRoot = normalizeDownloadSubdir(settings.obsidianVaultPath);
       if (response.images && response.images.length > 0) {
         setExportFeedback('正在下载图片...', 65);
-        await downloadImages(response.images, joinDownloadPath(downloadRoot, folder, filename));
+        await downloadImages(response.images, joinDownloadPath(downloadRoot, folder, filename), response.imagePrefix);
       }
 
       setExportFeedback('正在保存 Markdown...', 85);
@@ -682,7 +683,7 @@ async function exportJSON() {
   }
 }
 
-async function downloadImages(images, mdFilename) {
+async function downloadImages(images, mdFilename, imagePrefix) {
   // Download images to the same directory as the markdown file
   let imagesDir = mdFilename.includes('/') ? mdFilename.substring(0, mdFilename.lastIndexOf('/')) : '';
 
@@ -691,7 +692,8 @@ async function downloadImages(images, mdFilename) {
 
   const downloadPromises = images.map(async (img, idx) => {
     try {
-      const imgName = `image_${String(idx + 1).padStart(2, '0')}.png`;
+      const prefix = imagePrefix ? `${imagePrefix}_` : '';
+      const imgName = `${prefix}image_${String(idx + 1).padStart(2, '0')}.png`;
       const imgPath = imagesDir ? `${imagesDir}/${imgName}` : imgName;
       let downloadUrl = img.src;
 

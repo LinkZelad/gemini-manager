@@ -752,16 +752,27 @@
     return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
-  function imageNameForIndex(index) {
-    return `image_${String(index).padStart(2, '0')}.png`;
+  function imageNameForIndex(index, prefix) {
+    const p = prefix ? `${prefix}_` : '';
+    return `${p}image_${String(index).padStart(2, '0')}.png`;
   }
 
-  function imagePathForIndex(index, imageFolder) {
-    const name = imageNameForIndex(index);
+  function imagePathForIndex(index, imageFolder, prefix) {
+    const name = imageNameForIndex(index, prefix);
     return imageFolder ? `${imageFolder}/${name}` : name;
   }
 
-  function replaceImageReferences(markdown, images, startIndex, imageFolder) {
+  /**
+   * Generate a short unique prefix for image filenames based on conversation title and timestamp.
+   * This prevents filename collisions when exporting multiple conversations.
+   */
+  function generateImagePrefix(conversation) {
+    const title = (conversation.title || 'untitled').replace(/[^a-zA-Z0-9\u4e00-\u9fff]/g, '').substring(0, 12);
+    const ts = (conversation.timestamp || new Date().toISOString()).replace(/[^0-9]/g, '').substring(8, 14); // HHmmss
+    return `${title}_${ts}`;
+  }
+
+  function replaceImageReferences(markdown, images, startIndex, imageFolder, prefix) {
     let nextIndex = startIndex;
     let result = markdown || '';
     const entries = [];
@@ -769,8 +780,8 @@
 
     (images || []).forEach((img) => {
       nextIndex++;
-      const imgName = imageNameForIndex(nextIndex);
-      const imgPath = imagePathForIndex(nextIndex, imageFolder);
+      const imgName = imageNameForIndex(nextIndex, prefix);
+      const imgPath = imagePathForIndex(nextIndex, imageFolder, prefix);
       const entry = { img, imgName, imgPath, index: nextIndex, matched: false };
       entries.push(entry);
 
@@ -859,11 +870,16 @@
           turn.userTextHtml = userText;
         }
 
-        // Extract user images
-        const imgEl = chatTurn.querySelector('img.loaded-image');
-        if (imgEl) {
+        // Extract user images — capture ALL img elements (including blob: URLs)
+        const userImgs = chatTurn.querySelectorAll('img');
+        userImgs.forEach(imgEl => {
           let src = imgEl.getAttribute('src') || '';
-          if (src && !src.startsWith('data:image/svg')) {
+          // Skip SVGs and watermarks
+          if (src.startsWith('data:image/svg') || src.includes('watermark')) return;
+          if (src) {
+            if (!src.startsWith('http') && !src.startsWith('data:') && !src.startsWith('blob:')) {
+              src = src.startsWith('/') ? window.location.origin + src : src;
+            }
             turn.userImages.push({
               src: src,
               alt: imgEl.getAttribute('alt') || '',
@@ -871,7 +887,7 @@
               height: imgEl.getAttribute('height') || ''
             });
           }
-        }
+        });
 
         // Extract file attachments (ms-file-chunk)
         const fileChunk = chatTurn.querySelector('ms-file-chunk');
@@ -932,10 +948,8 @@
           const imgs = chatTurn.querySelectorAll('img');
           imgs.forEach(img => {
             let src = img.getAttribute('src') || '';
-            // Skip watermark images and SVGs
+            // Skip watermark images, SVGs, and tiny icon images
             if (src.includes('watermark') || src.startsWith('data:image/svg')) return;
-            // Skip user-uploaded images (handled separately)
-            if (img.classList.contains('loaded-image')) return;
             if (src) {
               if (!src.startsWith('http') && !src.startsWith('data:') && !src.startsWith('blob:')) {
                 src = src.startsWith('/') ? window.location.origin + src : src;
@@ -1340,6 +1354,9 @@
   function toMarkdown(conversation, options = {}) {
     const opts = { includeImages: true, includeThoughts: true, imageFolder: 'images', ...options };
     const lines = [];
+    const imgPrefix = generateImagePrefix(conversation);
+    const isAIStudio = conversation.url && conversation.url.includes('aistudio.google.com');
+    const modelName = isAIStudio ? 'Gemini (AI Studio)' : 'Gemini';
     lines.push(`# ${conversation.title}`);
     lines.push('');
     lines.push(`- **URL:** ${conversation.url}`);
@@ -1358,7 +1375,7 @@
         let userMd = turn.userTextHtml || turn.userText;
         let userImageReplacement = null;
         if (opts.includeImages && turn.userImages && turn.userImages.length > 0) {
-          userImageReplacement = replaceImageReferences(userMd, turn.userImages, globalImgIdx, opts.imageFolder);
+          userImageReplacement = replaceImageReferences(userMd, turn.userImages, globalImgIdx, opts.imageFolder, imgPrefix);
           userMd = userImageReplacement.markdown;
           globalImgIdx = userImageReplacement.nextIndex;
         }
@@ -1376,12 +1393,12 @@
       }
 
       if (turn.responseMarkdown || turn.responseText) {
-        lines.push(`## Gemini`);
+        lines.push(`## ${modelName}`);
         lines.push('');
         let responseMd = turn.responseMarkdown || turn.responseText;
         let responseImageReplacement = null;
         if (opts.includeImages && turn.images && turn.images.length > 0) {
-          responseImageReplacement = replaceImageReferences(responseMd, turn.images, globalImgIdx, opts.imageFolder);
+          responseImageReplacement = replaceImageReferences(responseMd, turn.images, globalImgIdx, opts.imageFolder, imgPrefix);
           responseMd = responseImageReplacement.markdown;
           globalImgIdx = responseImageReplacement.nextIndex;
         }
@@ -1397,7 +1414,7 @@
       }
     });
 
-    return lines.join('\n');
+    return { text: lines.join('\n'), imagePrefix: imgPrefix };
   }
 
   function toObsidianFormat(conversation, options = {}) {
@@ -1405,12 +1422,16 @@
     const lines = [];
     const date = new Date(conversation.timestamp);
     const dateStr = date.toISOString().split('T')[0];
+    const imgPrefix = generateImagePrefix(conversation);
+    const isAIStudio = conversation.url && conversation.url.includes('aistudio.google.com');
+    const source = isAIStudio ? 'ai-studio' : 'gemini';
+    const modelName = isAIStudio ? 'Gemini (AI Studio)' : 'Gemini';
 
     lines.push('---');
     lines.push(`title: "${conversation.title.replace(/"/g, '\\"')}"`);
     lines.push(`source: "${conversation.url}"`);
     lines.push(`date: ${dateStr}`);
-    lines.push(`tags: [gemini, ai-chat]`);
+    lines.push(`tags: [${source}, ai-chat]`);
     lines.push('---');
     lines.push('');
 
@@ -1427,7 +1448,7 @@
         let userMd = turn.userTextHtml || turn.userText;
         let userImageReplacement = null;
         if (opts.includeImages && turn.userImages && turn.userImages.length > 0) {
-          userImageReplacement = replaceImageReferences(userMd, turn.userImages, globalImgIdx, opts.imageFolder);
+          userImageReplacement = replaceImageReferences(userMd, turn.userImages, globalImgIdx, opts.imageFolder, imgPrefix);
           userMd = userImageReplacement.markdown;
           globalImgIdx = userImageReplacement.nextIndex;
         }
@@ -1448,12 +1469,12 @@
         let md = turn.responseMarkdown || turn.responseText;
         let responseImageReplacement = null;
         if (opts.includeImages && turn.images && turn.images.length > 0) {
-          responseImageReplacement = replaceImageReferences(md, turn.images, globalImgIdx, opts.imageFolder);
+          responseImageReplacement = replaceImageReferences(md, turn.images, globalImgIdx, opts.imageFolder, imgPrefix);
           md = responseImageReplacement.markdown;
           globalImgIdx = responseImageReplacement.nextIndex;
         }
 
-        lines.push(`### 🤖 Gemini`);
+        lines.push(`### 🤖 ${modelName}`);
         lines.push('');
         lines.push(md);
         lines.push('');
@@ -1467,7 +1488,7 @@
       }
     });
 
-    return lines.join('\n');
+    return { text: lines.join('\n'), imagePrefix: imgPrefix };
   }
 
   function toJSON(conversation) {
@@ -1501,7 +1522,7 @@
       const conv = extractCurrentConversation();
       processConversationImages(conv).then(() => {
         try {
-          const md = toMarkdown(conv, {
+          const result = toMarkdown(conv, {
             includeImages: request.includeImages !== false,
             includeThoughts: request.includeThoughts !== false,
             imageFolder: request.imageFolder
@@ -1512,7 +1533,7 @@
             if (turn.userImages) turn.userImages.forEach((img) => allImages.push({ ...img, turnIndex: tidx, source: 'user' }));
             if (turn.images) turn.images.forEach((img) => allImages.push({ ...img, turnIndex: tidx, source: 'model' }));
           });
-          sendResponse({ success: true, content: md, title: conv.title, defaultFilename: defaultName, images: allImages });
+          sendResponse({ success: true, content: result.text, title: conv.title, defaultFilename: defaultName, images: allImages, imagePrefix: result.imagePrefix });
         } catch (err) {
           sendResponse({ success: false, error: err.message });
         }
@@ -1524,7 +1545,7 @@
       const conv = extractCurrentConversation();
       processConversationImages(conv).then(async () => {
         try {
-          const md = toObsidianFormat(conv, {
+          const result = toObsidianFormat(conv, {
             includeImages: request.includeImages !== false,
             includeThoughts: request.includeThoughts !== false,
             imageFolder: request.imageFolder
@@ -1536,7 +1557,7 @@
             if (turn.images) turn.images.forEach((img) => allImages.push({ ...img, turnIndex: tidx, source: 'model' }));
           });
 
-          let finalMd = md;
+          let finalMd = result.text;
           // Embed images as base64 when requested (for Obsidian URI mode)
           if (request.embedImages && allImages.length > 0) {
             const base64Results = await fetchImagesAsBase64(allImages);
@@ -1546,7 +1567,7 @@
             }
           }
 
-          sendResponse({ success: true, content: finalMd, title: conv.title, defaultFilename: defaultName, images: allImages });
+          sendResponse({ success: true, content: finalMd, title: conv.title, defaultFilename: defaultName, images: allImages, imagePrefix: result.imagePrefix });
         } catch (err) {
           sendResponse({ success: false, error: err.message });
         }
@@ -1646,7 +1667,8 @@
     btn.addEventListener('click', async () => {
       try {
         const conv = extractCurrentConversation();
-        const md = toMarkdown(conv);
+        const result = toMarkdown(conv);
+        const md = result.text;
         const blob = new Blob([md], { type: 'text/markdown' });
         const defaultName = `${formatDateTime(conv.timestamp)}_${sanitizeFilename(conv.title)}.md`;
 

@@ -78,7 +78,7 @@ if (chrome.contextMenus && chrome.contextMenus.onClicked) {
             const downloadRoot = normalizeDownloadSubdir(settings.obsidianVaultPath);
             const downloadPath = joinDownloadPath(downloadRoot, folder, defaultFilename);
             if (response.images && response.images.length > 0) {
-              await downloadImages(response.images, downloadPath);
+              await downloadImages(response.images, downloadPath, response.imagePrefix);
             }
             await downloadContent(response.content, downloadPath, 'text/markdown');
           }
@@ -151,7 +151,7 @@ chrome.commands.onCommand.addListener(async (command) => {
             const downloadRoot = normalizeDownloadSubdir(settings.obsidianVaultPath);
             const downloadPath = joinDownloadPath(downloadRoot, folder, defaultFilename);
             if (response.images && response.images.length > 0) {
-              await downloadImages(response.images, downloadPath);
+              await downloadImages(response.images, downloadPath, response.imagePrefix);
             }
             await downloadContent(response.content, downloadPath, 'text/markdown');
         }
@@ -216,7 +216,7 @@ function joinDownloadPath(...parts) {
     .join('/');
 }
 
-async function downloadImages(images, mdFilename) {
+async function downloadImages(images, mdFilename, imagePrefix) {
   // Download images to the same directory as the markdown file
   let imagesDir = mdFilename.includes('/') ? mdFilename.substring(0, mdFilename.lastIndexOf('/')) : '';
 
@@ -234,7 +234,8 @@ async function downloadImages(images, mdFilename) {
 
   const downloadPromises = images.map(async (img, idx) => {
     try {
-      const imgName = `image_${String(idx + 1).padStart(2, '0')}.png`;
+      const prefix = imagePrefix ? `${imagePrefix}_` : '';
+      const imgName = `${prefix}image_${String(idx + 1).padStart(2, '0')}.png`;
       const imgPath = imagesDir ? `${imagesDir}/${imgName}` : imgName;
       let downloadUrl = img.src;
 
