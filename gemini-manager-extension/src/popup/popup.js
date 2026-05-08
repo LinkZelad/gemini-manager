@@ -66,15 +66,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupTabs();
 
   if (isGeminiPage) {
-    els.statusBadge.textContent = '已连接';
+    const siteName = currentTab.url.includes('aistudio.google.com') ? 'AI Studio' : 'Gemini';
+    els.statusBadge.textContent = `已连接 (${siteName})`;
     els.statusBadge.classList.add('online');
     await refreshCurrentConversation();
     await refreshConversationList();
   } else {
-    els.statusBadge.textContent = '未在 Gemini 页面';
+    els.statusBadge.textContent = '未在 Gemini/AI Studio 页面';
     els.statusBadge.classList.add('offline');
-    els.convTitle.textContent = '请在 Gemini 页面使用';
-    els.conversationList.innerHTML = '<div class="empty-state">请打开 gemini.google.com 后重试</div>';
+    els.convTitle.textContent = '请在 Gemini 或 AI Studio 页面使用';
+    els.conversationList.innerHTML = '<div class="empty-state">请打开 gemini.google.com 或 aistudio.google.com 后重试</div>';
   }
 });
 
@@ -274,19 +275,31 @@ async function unarchiveConversation(id) {
 
 async function findGeminiTab() {
   try {
-    const tabs = await chrome.tabs.query({ url: 'https://gemini.google.com/*' });
-    if (tabs.length > 0) {
-      currentTab = tabs[0];
-      isGeminiPage = true;
-    } else {
-      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (activeTab && activeTab.url && activeTab.url.includes('gemini.google.com')) {
-        currentTab = activeTab;
+    // Search for Gemini tabs first, then AI Studio
+    const supportedPatterns = [
+      'https://gemini.google.com/*',
+      'https://aistudio.google.com/*'
+    ];
+    for (const pattern of supportedPatterns) {
+      const tabs = await chrome.tabs.query({ url: pattern });
+      if (tabs.length > 0) {
+        currentTab = tabs[0];
         isGeminiPage = true;
+        return;
       }
     }
+
+    // Check active tab as fallback
+    const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (activeTab && activeTab.url && (
+      activeTab.url.includes('gemini.google.com') ||
+      activeTab.url.includes('aistudio.google.com')
+    )) {
+      currentTab = activeTab;
+      isGeminiPage = true;
+    }
   } catch (err) {
-    console.error('Failed to find Gemini tab:', err);
+    console.error('Failed to find supported tab:', err);
   }
 }
 

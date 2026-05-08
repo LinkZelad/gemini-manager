@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Gemini Manager",
   "version": "1.0.0",
-  "description": "Manage, archive and export your Gemini conversations to Obsidian",
+  "description": "Manage, archive and export your Gemini / AI Studio conversations to Obsidian",
   "permissions": [
     "activeTab",
     "contextMenus",
@@ -13,6 +13,7 @@
   ],
   "host_permissions": [
     "https://gemini.google.com/*",
+    "https://aistudio.google.com/*",
     "https://lh3.googleusercontent.com/*",
     "https://lh3.google.com/*",
     "https://lh3.ggpht.com/*"
@@ -34,7 +35,7 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://gemini.google.com/*"],
+      "matches": ["https://gemini.google.com/*", "https://aistudio.google.com/*"],
       "js": ["src/content/content.js"],
       "css": ["src/content/content.css"],
       "run_at": "document_idle"

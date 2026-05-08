@@ -1,6 +1,6 @@
 /**
  * Gemini Manager - Content Script
- * Runs on gemini.google.com to extract conversation data
+ * Runs on gemini.google.com and aistudio.google.com to extract conversation data
  */
 
 (function () {
@@ -10,6 +10,22 @@
     return;
   }
   window.__GM_CONTENT_SCRIPT_LOADED__ = true;
+
+  // ===== Site Detection =====
+  const SITE = {
+    GEMINI: 'gemini',
+    AISTUDIO: 'aistudio',
+    UNKNOWN: 'unknown'
+  };
+
+  function detectSite() {
+    const host = window.location.hostname;
+    if (host.includes('gemini.google.com')) return SITE.GEMINI;
+    if (host.includes('aistudio.google.com')) return SITE.AISTUDIO;
+    return SITE.UNKNOWN;
+  }
+
+  const currentSite = detectSite();
 
   // ===== DOM Selectors (based on Gemini's current structure) =====
   const SELECTORS = {
@@ -796,9 +812,153 @@
     return result;
   }
 
-  // ===== Conversation Extraction =====
+  // ===== AI Studio Conversation Extraction =====
+
+  /**
+   * Extract conversation from AI Studio (aistudio.google.com).
+   * AI Studio uses Angular components: ms-chat-turn, ms-text-chunk, etc.
+   */
+  function extractAIStudioConversation() {
+    const doc = document;
+    const chatTurns = doc.querySelectorAll('ms-chat-turn');
+
+    const turns = [];
+    const seenUserTexts = new Set();
+
+    chatTurns.forEach((chatTurn, index) => {
+      const turnContainer = chatTurn.querySelector('[data-turn-role]');
+      if (!turnContainer) return;
+
+      const role = turnContainer.getAttribute('data-turn-role');
+
+      const turn = {
+        index: index,
+        type: 'unknown',
+        userText: null,
+        userTextHtml: null,
+        thoughtText: null,
+        responseText: null,
+        responseHtml: null,
+        responseMarkdown: null,
+        images: [],
+        userImages: []
+      };
+
+      if (role === 'User') {
+        // Extract user text from ms-text-chunk
+        const textChunk = chatTurn.querySelector('ms-text-chunk');
+        const userText = textChunk ? normalizeText(getNodeText(textChunk)) : '';
+
+        if (userText && !seenUserTexts.has(userText)) {
+          seenUserTexts.add(userText);
+          turn.userText = userText;
+          turn.userTextHtml = userText;
+        }
+
+        // Extract user images
+        const imgEl = chatTurn.querySelector('img.loaded-image');
+        if (imgEl) {
+          let src = imgEl.getAttribute('src') || '';
+          if (src && !src.startsWith('data:image/svg')) {
+            turn.userImages.push({
+              src: src,
+              alt: imgEl.getAttribute('alt') || '',
+              width: imgEl.getAttribute('width') || '',
+              height: imgEl.getAttribute('height') || ''
+            });
+          }
+        }
+
+        // Extract file attachments (ms-file-chunk)
+        const fileChunk = chatTurn.querySelector('ms-file-chunk');
+        if (fileChunk) {
+          const nameSpan = fileChunk.querySelector('span');
+          const fileName = nameSpan ? nameSpan.innerText.trim() : 'attachment';
+          if (!turn.userText) {
+            turn.userText = `[附件: ${fileName}]`;
+            turn.userTextHtml = `[附件: ${fileName}]`;
+          } else {
+            turn.userText += `\n[附件: ${fileName}]`;
+            turn.userTextHtml += `\n[附件: ${fileName}]`;
+          }
+        }
+
+        if (turn.userText) {
+          turn.type = 'user';
+          turns.push(turn);
+        }
+
+      } else if (role === 'Model') {
+        // Extract reasoning/thinking (in expansion panel)
+        const chevronButton = Array.from(chatTurn.querySelectorAll('span')).find(
+          span => span.textContent.trim() === 'chevron_right'
+        );
+        if (chevronButton) {
+          // Check if reasoning panel is already expanded
+          const expansionPanel = chatTurn.querySelector('.mat-expansion-panel-body ms-text-chunk');
+          if (expansionPanel) {
+            const reasoningText = normalizeText(expansionPanel.textContent);
+            if (reasoningText) {
+              turn.thoughtText = reasoningText;
+            }
+          }
+        }
+
+        // Extract model response text
+        const textChunk = chatTurn.querySelector('ms-text-chunk');
+        if (textChunk) {
+          const responseText = normalizeText(getNodeText(textChunk));
+          if (responseText) {
+            turn.responseText = responseText;
+            // Try to convert HTML to markdown
+            turn.responseMarkdown = htmlToMarkdown(textChunk);
+            turn.responseHtml = textChunk.innerHTML;
+          }
+
+          // Extract images from model response
+          const imgs = chatTurn.querySelectorAll('img');
+          imgs.forEach(img => {
+            let src = img.getAttribute('src') || '';
+            if (src && !src.startsWith('data:image/svg') && !img.classList.contains('loaded-image')) {
+              if (!src.startsWith('http') && !src.startsWith('data:') && !src.startsWith('blob:')) {
+                src = src.startsWith('/') ? window.location.origin + src : src;
+              }
+              turn.images.push({
+                src: src,
+                alt: img.getAttribute('alt') || '',
+                width: img.getAttribute('width') || '',
+                height: img.getAttribute('height') || ''
+              });
+            }
+          });
+        }
+
+        if (turn.responseMarkdown || turn.responseText) {
+          turn.type = turn.userText ? 'qa' : 'model';
+          turns.push(turn);
+        }
+      }
+    });
+
+    return {
+      title: getConversationTitle(),
+      url: window.location.href,
+      timestamp: new Date().toISOString(),
+      turns: turns
+    };
+  }
+
+  // ===== Gemini Conversation Extraction =====
 
   function extractCurrentConversation() {
+    // Delegate to site-specific extractor
+    if (currentSite === SITE.AISTUDIO) {
+      return extractAIStudioConversation();
+    }
+    return extractGeminiConversation();
+  }
+
+  function extractGeminiConversation() {
     const doc = document;
     let containers = doc.querySelectorAll(SELECTORS.conversationContainer);
 
@@ -1032,6 +1192,31 @@
   }
 
   function getConversationTitle() {
+    if (currentSite === SITE.AISTUDIO) {
+      // AI Studio title selectors
+      const titleEl = document.querySelector('.actions.pointer.mode-title');
+      if (titleEl) return normalizeText(getNodeText(titleEl));
+
+      // Fallback: page title
+      if (document.title && document.title !== 'Google AI Studio') {
+        return normalizeText(document.title);
+      }
+
+      // Fallback: first user message
+      const firstUserTurn = document.querySelector('ms-chat-turn [data-turn-role="User"]');
+      if (firstUserTurn) {
+        const chatTurn = firstUserTurn.closest('ms-chat-turn');
+        const textChunk = chatTurn ? chatTurn.querySelector('ms-text-chunk') : null;
+        if (textChunk) {
+          const text = normalizeText(getNodeText(textChunk));
+          if (text) return text.substring(0, 50) + (text.length > 50 ? '...' : '');
+        }
+      }
+
+      return 'AI Studio Conversation';
+    }
+
+    // Gemini title logic
     let titleEl = document.querySelector(SELECTORS.topBarTitle);
     if (titleEl) return normalizeText(getNodeText(titleEl));
 
@@ -1058,9 +1243,24 @@
     return 'Gemini Conversation';
   }
 
+  // ===== AI Studio Conversation List =====
+
+  function extractAIStudioConversationList() {
+    // AI Studio doesn't have a sidebar conversation list like Gemini.
+    // Return empty - the current conversation can still be exported.
+    return [];
+  }
+
   // ===== Conversation List Extraction =====
 
   function extractConversationList() {
+    if (currentSite === SITE.AISTUDIO) {
+      return extractAIStudioConversationList();
+    }
+    return extractGeminiConversationList();
+  }
+
+  function extractGeminiConversationList() {
     let items = document.querySelectorAll(SELECTORS.historyItem);
 
     if (items.length === 0) {

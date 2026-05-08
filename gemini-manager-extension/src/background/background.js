@@ -1,6 +1,24 @@
 /**
  * Gemini Manager - Background Service Worker
+ * Supports both gemini.google.com and aistudio.google.com
  */
+
+// ===== Site Detection =====
+
+const SUPPORTED_URLS = ['https://gemini.google.com/*', 'https://aistudio.google.com/*'];
+const SUPPORTED_PATTERNS = [/gemini\.google\.com/, /aistudio\.google\.com/];
+
+function isSupportedUrl(url) {
+  return SUPPORTED_PATTERNS.some(p => p.test(url));
+}
+
+async function findSupportedTab() {
+  for (const pattern of SUPPORTED_URLS) {
+    const tabs = await chrome.tabs.query({ url: pattern });
+    if (tabs.length > 0) return tabs[0];
+  }
+  return null;
+}
 
 // ===== Context Menu =====
 
@@ -14,14 +32,14 @@ chrome.runtime.onInstalled.addListener(() => {
     id: 'gemini-manager-export-md',
     title: '导出为 Markdown',
     contexts: ['page'],
-    documentUrlPatterns: ['https://gemini.google.com/*']
+    documentUrlPatterns: ['https://gemini.google.com/*', 'https://aistudio.google.com/*']
   });
 
   chrome.contextMenus.create({
     id: 'gemini-manager-export-obsidian',
     title: '导出到 Obsidian',
     contexts: ['page'],
-    documentUrlPatterns: ['https://gemini.google.com/*']
+    documentUrlPatterns: ['https://gemini.google.com/*', 'https://aistudio.google.com/*']
   });
 
   console.log('[Gemini Manager] Extension installed, context menus created');
@@ -29,7 +47,7 @@ chrome.runtime.onInstalled.addListener(() => {
 
 if (chrome.contextMenus && chrome.contextMenus.onClicked) {
   chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-    if (!tab || !tab.url.includes('gemini.google.com')) return;
+    if (!tab || !isSupportedUrl(tab.url)) return;
 
     try {
       const settings = await getSettings();
@@ -103,7 +121,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 chrome.commands.onCommand.addListener(async (command) => {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab || !tab.url.includes('gemini.google.com')) return;
+    if (!tab || !isSupportedUrl(tab.url)) return;
 
     const settings = await getSettings();
     if (command === 'export-markdown') {
@@ -147,8 +165,8 @@ chrome.commands.onCommand.addListener(async (command) => {
 // ===== Tab Change Detection =====
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (tab.url && tab.url.includes('gemini.google.com') && changeInfo.status === 'complete') {
-    console.log('[Gemini Manager] Gemini page loaded:', tab.url);
+  if (tab.url && isSupportedUrl(tab.url) && changeInfo.status === 'complete') {
+    console.log('[Gemini Manager] Supported page loaded:', tab.url);
   }
 });
 
@@ -208,8 +226,8 @@ async function downloadImages(images, mdFilename) {
   // Get the active Gemini tab to delegate authenticated fetches
   let geminiTabId = null;
   try {
-    const tabs = await chrome.tabs.query({ url: 'https://gemini.google.com/*' });
-    if (tabs.length > 0) geminiTabId = tabs[0].id;
+    const tab = await findSupportedTab();
+    if (tab) geminiTabId = tab.id;
   } catch (e) {
     console.warn('[Gemini Manager] Could not find Gemini tab for image fetch:', e);
   }
