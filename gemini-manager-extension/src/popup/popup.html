@@ -53,6 +53,34 @@
           <button class="btn btn-secondary" id="btn-export-json">
             <span class="icon">📊</span> 导出 JSON
           </button>
+
+          <div class="selective-export-row">
+            <button class="btn btn-sm btn-selective" id="btn-toggle-selective">
+              <span class="icon">☑️</span> 选择性导出
+            </button>
+          </div>
+
+          <!-- Turn Selector Panel (hidden by default) -->
+          <div class="turn-selector-panel" id="turn-selector-panel" hidden>
+            <div class="turn-selector-header">
+              <span class="turn-selector-title">选择要导出的轮次</span>
+              <div class="turn-selector-actions">
+                <button class="btn btn-xs" id="btn-select-all">全选</button>
+                <button class="btn btn-xs" id="btn-select-none">全不选</button>
+              </div>
+            </div>
+            <div class="turn-selector-list" id="turn-selector-list">
+              <div class="empty-state">加载中...</div>
+            </div>
+            <div class="turn-selector-footer">
+              <span class="turn-count" id="turn-select-count">已选 0 轮</span>
+              <div class="turn-selector-export-btns">
+                <button class="btn btn-sm btn-primary" id="btn-selective-export-md">📝 导出选中</button>
+                <button class="btn btn-sm btn-obsidian" id="btn-selective-export-obsidian">🏔️ 导出选中</button>
+              </div>
+            </div>
+          </div>
+
           <button class="btn btn-archive" id="btn-archive-current">
             <span class="icon">📦</span> 归档当前对话
           </button>

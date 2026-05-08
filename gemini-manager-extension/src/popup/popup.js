@@ -52,7 +52,16 @@ const els = {
   includeThoughts: document.getElementById('include-thoughts'),
   btnSaveSettings: document.getElementById('btn-save-settings'),
   btnClearArchived: document.getElementById('btn-clear-archived'),
-  btnExportStorage: document.getElementById('btn-export-storage')
+  btnExportStorage: document.getElementById('btn-export-storage'),
+  // Selective export
+  btnToggleSelective: document.getElementById('btn-toggle-selective'),
+  turnSelectorPanel: document.getElementById('turn-selector-panel'),
+  turnSelectorList: document.getElementById('turn-selector-list'),
+  btnSelectAll: document.getElementById('btn-select-all'),
+  btnSelectNone: document.getElementById('btn-select-none'),
+  turnSelectCount: document.getElementById('turn-select-count'),
+  btnSelectiveExportMd: document.getElementById('btn-selective-export-md'),
+  btnSelectiveExportObsidian: document.getElementById('btn-selective-export-obsidian')
 };
 
 // ===== Initialization =====
@@ -131,7 +140,8 @@ function setExportFeedback(message, progress = null) {
 }
 
 function setExportBusy(isBusy) {
-  [els.btnExportMd, els.btnExportObsidian, els.btnExportJson, els.btnExportAll, els.btnArchiveCurrent].forEach((btn) => {
+  [els.btnExportMd, els.btnExportObsidian, els.btnExportJson, els.btnExportAll, els.btnArchiveCurrent,
+   els.btnSelectiveExportMd, els.btnSelectiveExportObsidian, els.btnToggleSelective].forEach((btn) => {
     if (btn) btn.disabled = isBusy;
   });
 }
@@ -935,6 +945,183 @@ function showToast(message, type = 'success') {
     setTimeout(() => toast.remove(), 300);
   }, 2000);
 }
+// ===== Selective Export =====
+
+let selectiveTurnPreviews = []; // cached turn previews from content script
+
+async function toggleSelectiveExport() {
+  const panel = els.turnSelectorPanel;
+  const btn = els.btnToggleSelective;
+
+  if (!panel.hidden) {
+    // Close panel
+    panel.hidden = true;
+    btn.classList.remove('active');
+    selectiveTurnPreviews = [];
+    return;
+  }
+
+  // Open panel and fetch turn previews
+  btn.classList.add('active');
+  panel.hidden = false;
+  els.turnSelectorList.innerHTML = '<div class="empty-state">正在加载对话轮次...</div>';
+
+  try {
+    const isAIStudio = currentTab && currentTab.url && currentTab.url.includes('aistudio.google.com');
+    if (isAIStudio) {
+      els.turnSelectorList.innerHTML = '<div class="empty-state">正在扫描 AI Studio 对话（可能需要一些时间）...</div>';
+    }
+    const response = await sendToContent('extractTurnPreviews');
+    selectiveTurnPreviews = response.data.turns || [];
+    renderTurnSelector();
+  } catch (err) {
+    els.turnSelectorList.innerHTML = `<div class="empty-state">加载失败: ${err.message}</div>`;
+  }
+}
+
+function renderTurnSelector() {
+  if (!selectiveTurnPreviews.length) {
+    els.turnSelectorList.innerHTML = '<div class="empty-state">没有可选轮次</div>';
+    updateTurnSelectCount();
+    return;
+  }
+
+  els.turnSelectorList.innerHTML = selectiveTurnPreviews.map((turn, idx) => {
+    const roleClass = turn.role === 'user' ? 'user' : 'model';
+    const roleLabel = turn.role === 'user' ? '👤 用户' : '🤖 模型';
+    const previewText = escapeHtml(turn.preview || '(无内容)');
+    const imgBadge = turn.hasImages ? ' 🖼️' : '';
+    return `
+      <label class="turn-item" data-index="${turn.index}">
+        <input type="checkbox" checked data-turn-index="${turn.index}">
+        <div class="turn-item-content">
+          <span class="turn-item-role ${roleClass}">${roleLabel}${imgBadge}</span>
+          <div class="turn-item-preview">${previewText}</div>
+        </div>
+      </label>
+    `;
+  }).join('');
+
+  // Add change listeners to checkboxes
+  els.turnSelectorList.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+    cb.addEventListener('change', updateTurnSelectCount);
+  });
+
+  updateTurnSelectCount();
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function selectAllTurns(selectAll) {
+  els.turnSelectorList.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+    cb.checked = selectAll;
+  });
+  updateTurnSelectCount();
+}
+
+function updateTurnSelectCount() {
+  const checkboxes = els.turnSelectorList.querySelectorAll('input[type="checkbox"]');
+  const checked = els.turnSelectorList.querySelectorAll('input[type="checkbox"]:checked');
+  els.turnSelectCount.textContent = `已选 ${checked.length}/${checkboxes.length} 轮`;
+
+  // Disable export buttons if nothing selected
+  const hasSelection = checked.length > 0;
+  els.btnSelectiveExportMd.disabled = !hasSelection;
+  els.btnSelectiveExportObsidian.disabled = !hasSelection;
+}
+
+function getSelectedTurnIndices() {
+  const indices = [];
+  els.turnSelectorList.querySelectorAll('input[type="checkbox"]:checked').forEach(cb => {
+    indices.push(parseInt(cb.dataset.turnIndex, 10));
+  });
+  return indices;
+}
+
+async function selectiveExport(format) {
+  const selectedIndices = getSelectedTurnIndices();
+  if (selectedIndices.length === 0) {
+    showToast('请至少选择一个轮次', 'error');
+    return;
+  }
+
+  setExportBusy(true);
+  const isAIStudio = currentTab && currentTab.url && currentTab.url.includes('aistudio.google.com');
+  setExportFeedback(isAIStudio ? '正在提取选中轮次（AI Studio 需要较长时间）...' : `正在导出选中的 ${selectedIndices.length} 个轮次...`, 10);
+
+  try {
+    const directWrite = shouldUseDirectWrite();
+
+    // Pre-verify permission while user activation is still valid
+    let directWritePermissionOk = false;
+    if (directWrite) {
+      try {
+        directWritePermissionOk = await verifyDirectoryPermission(exportDirectoryHandle, true);
+      } catch (e) {
+        console.warn('[Gemini Manager] Pre-verify permission failed:', e);
+      }
+    }
+
+    const action = format === 'obsidian' ? 'exportObsidian' : 'exportMarkdown';
+    const embedImages = format === 'obsidian' ? shouldEmbedImagesForObsidian() : false;
+
+    const response = await sendToContent(action, {
+      imageFolder: (directWrite && directWritePermissionOk) ? DIRECT_IMAGE_FOLDER : '',
+      includeThoughts: settings.includeThoughts !== false,
+      embedImages,
+      selectedTurnIndices: selectedIndices
+    });
+
+    setExportFeedback('正在准备导出...', 40);
+    const filename = getUserFilename(response.defaultFilename, '.md');
+
+    if (directWrite && directWritePermissionOk) {
+      const wroteDirectly = await writeObsidianExportToDirectory(response, filename);
+      if (wroteDirectly) {
+        setExportFeedback(`已完成: ${filename}`, 100);
+        return;
+      }
+    }
+
+    if (format === 'obsidian' && settings.obsidianUseUri) {
+      setExportFeedback('正在打开 Obsidian...', 80);
+      const vault = settings.obsidianVault ? `&vault=${encodeURIComponent(settings.obsidianVault)}` : '';
+      const folder = settings.obsidianFolder ? settings.obsidianFolder + '/' : '';
+      const baseName = filename.replace('.md', '');
+      const uri = `obsidian://new?file=${encodeURIComponent(folder + baseName)}${vault}&content=${encodeURIComponent(response.content)}`;
+      await chrome.tabs.update(currentTab.id, { url: uri });
+      showToast('已打开 Obsidian', 'success');
+      setExportFeedback('已打开 Obsidian', 100);
+    } else {
+      // Download images if present
+      if (response.images && response.images.length > 0) {
+        setExportFeedback('正在下载图片...', 65);
+        const downloadRoot = format === 'obsidian' ? normalizeDownloadSubdir(settings.obsidianVaultPath) : '';
+        const folder = format === 'obsidian' ? (settings.obsidianFolder ? settings.obsidianFolder + '/' : '') : '';
+        await downloadImages(response.images, joinDownloadPath(downloadRoot, folder, filename), response.imagePrefix);
+      }
+
+      setExportFeedback('正在保存...', 85);
+      const blob = new Blob([response.content], { type: 'text/markdown' });
+      const downloadRoot = format === 'obsidian' ? normalizeDownloadSubdir(settings.obsidianVaultPath) : '';
+      const folder = format === 'obsidian' ? (settings.obsidianFolder ? settings.obsidianFolder + '/' : '') : '';
+      const downloadPath = joinDownloadPath(downloadRoot, folder, filename);
+      await downloadFile(blob, downloadPath);
+      showToast(`已下载: ${downloadPath}`, 'success');
+      setExportFeedback(`已完成: ${downloadPath}`, 100);
+    }
+  } catch (err) {
+    setExportFeedback('导出失败');
+    showToast('导出失败: ' + err.message, 'error');
+  } finally {
+    setExportBusy(false);
+    setTimeout(() => setExportFeedback('', null), 1200);
+  }
+}
 
 // ===== Event Listeners =====
 
@@ -953,6 +1140,13 @@ function setupEventListeners() {
   els.filterInput.addEventListener('input', renderConversationList);
   els.filterStatus.addEventListener('change', renderConversationList);
   els.useDirectObsidianWrite.addEventListener('change', syncExportModeControls);
+
+  // Selective export
+  els.btnToggleSelective.addEventListener('click', toggleSelectiveExport);
+  els.btnSelectAll.addEventListener('click', () => selectAllTurns(true));
+  els.btnSelectNone.addEventListener('click', () => selectAllTurns(false));
+  els.btnSelectiveExportMd.addEventListener('click', () => selectiveExport('markdown'));
+  els.btnSelectiveExportObsidian.addEventListener('click', () => selectiveExport('obsidian'));
 
   // Event delegation for conversation list items (avoids inline onclick CSP issues)
   els.conversationList.addEventListener('click', (e) => {

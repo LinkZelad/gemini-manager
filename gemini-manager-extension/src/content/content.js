@@ -1620,10 +1620,40 @@
       return true;
     }
 
+    if (request.action === 'extractTurnPreviews') {
+      (async () => {
+        try {
+          const conv = await extractCurrentConversation();
+          // Return lightweight turn previews for the selector UI
+          const previews = conv.turns.map((turn, idx) => {
+            let preview = '';
+            let role = 'unknown';
+            if (turn.type === 'user') {
+              role = 'user';
+              preview = (turn.userText || '').substring(0, 80);
+            } else if (turn.type === 'model' || turn.type === 'qa') {
+              role = 'model';
+              preview = (turn.responseText || turn.responseMarkdown || '').substring(0, 80);
+            }
+            return { index: idx, role, preview, hasImages: (turn.images && turn.images.length > 0) || (turn.userImages && turn.userImages.length > 0) };
+          });
+          sendResponse({ success: true, data: { title: conv.title, turns: previews } });
+        } catch (err) {
+          sendResponse({ success: false, error: err.message });
+        }
+      })();
+      return true;
+    }
+
     if (request.action === 'exportMarkdown') {
       (async () => {
         try {
           const conv = await extractCurrentConversation();
+          // Filter turns if selectedTurnIndices is provided
+          if (request.selectedTurnIndices && Array.isArray(request.selectedTurnIndices)) {
+            const selected = new Set(request.selectedTurnIndices);
+            conv.turns = conv.turns.filter((_, idx) => selected.has(idx));
+          }
           await processConversationImages(conv);
           const result = toMarkdown(conv, {
             includeImages: request.includeImages !== false,
@@ -1652,6 +1682,11 @@
       (async () => {
         try {
           const conv = await extractCurrentConversation();
+          // Filter turns if selectedTurnIndices is provided
+          if (request.selectedTurnIndices && Array.isArray(request.selectedTurnIndices)) {
+            const selected = new Set(request.selectedTurnIndices);
+            conv.turns = conv.turns.filter((_, idx) => selected.has(idx));
+          }
           await processConversationImages(conv);
           const result = toObsidianFormat(conv, {
             includeImages: request.includeImages !== false,
@@ -1690,6 +1725,11 @@
       (async () => {
         try {
           const conv = await extractCurrentConversation();
+          // Filter turns if selectedTurnIndices is provided
+          if (request.selectedTurnIndices && Array.isArray(request.selectedTurnIndices)) {
+            const selected = new Set(request.selectedTurnIndices);
+            conv.turns = conv.turns.filter((_, idx) => selected.has(idx));
+          }
           const json = toJSON(conv);
           const defaultName = `${formatDateTime(conv.timestamp)}_${sanitizeFilename(conv.title)}.json`;
           sendResponse({ success: true, content: json, title: conv.title, defaultFilename: defaultName });
