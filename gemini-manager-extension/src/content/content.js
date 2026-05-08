@@ -1057,7 +1057,7 @@
     }
 
     const conversation = {
-      title: getConversationTitle(),
+      title: await getConversationTitleWithRetry(),
       url: window.location.href,
       timestamp: new Date().toISOString(),
       turns: turns
@@ -1089,7 +1089,7 @@
     return extractGeminiConversation();
   }
 
-  function extractGeminiConversation() {
+  async function extractGeminiConversation() {
     const doc = document;
     let containers = doc.querySelectorAll(SELECTORS.conversationContainer);
 
@@ -1315,11 +1315,26 @@
     });
 
     return {
-      title: getConversationTitle(),
+      title: await getConversationTitleWithRetry(),
       url: window.location.href,
       timestamp: new Date().toISOString(),
       turns: turns
     };
+  }
+
+  // 带重试机制的标题获取，等待页面加载完成
+  async function getConversationTitleWithRetry(maxRetries = 5, delayMs = 500) {
+    const genericTitles = ['gemini conversation', 'ai studio conversation'];
+    for (let i = 0; i < maxRetries; i++) {
+      const title = getConversationTitle();
+      if (!genericTitles.includes(title.toLowerCase())) {
+        return title;
+      }
+      if (i < maxRetries - 1) {
+        await new Promise(r => setTimeout(r, delayMs));
+      }
+    }
+    return getConversationTitle(); // 最后一次尝试的结果
   }
 
   function getConversationTitle() {
@@ -1904,14 +1919,21 @@
 
   let folderData = {
     folders: [], // { id: '...', name: '...', isOpen: true }
-    mappings: {} // { 'conv_id': 'folder_id' }
+    mappings: {}, // { 'conv_id': 'folder_id' }
+    uncategorizedOpen: true // 未分类文件夹是否展开
   };
+
+  // 找到真正的侧边栏元素，绝不回退到 document.body
+  function findSidebarElement() {
+    return document.querySelector('mat-sidenav, nav, [role="navigation"], .sidenav, aside');
+  }
 
   async function loadFolderData() {
     return new Promise(resolve => {
-      chrome.storage.local.get(['gm_folders', 'gm_folder_mappings'], (result) => {
+      chrome.storage.local.get(['gm_folders', 'gm_folder_mappings', 'gm_uncategorized_open'], (result) => {
         folderData.folders = result.gm_folders || [];
         folderData.mappings = result.gm_folder_mappings || {};
+        folderData.uncategorizedOpen = result.gm_uncategorized_open !== false;
         resolve();
       });
     });
@@ -1921,7 +1943,8 @@
     return new Promise(resolve => {
       chrome.storage.local.set({
         gm_folders: folderData.folders,
-        gm_folder_mappings: folderData.mappings
+        gm_folder_mappings: folderData.mappings,
+        gm_uncategorized_open: folderData.uncategorizedOpen
       }, resolve);
     });
   }
@@ -1954,8 +1977,13 @@
     if (!isFolderManagementEnabled || currentSite !== SITE.GEMINI) return;
     await loadFolderData();
 
-    const sidebar = document.querySelector('mat-sidenav, nav, [role="navigation"], .sidenav') || document.body;
-    const chatLinks = Array.from(sidebar.querySelectorAll('a[href*="/app/"]'));
+    const sidebar = findSidebarElement();
+    if (!sidebar) return;
+
+    // 只在侧边栏中查找聊天链接，排除我们自己注入的 gm- 元素
+    const chatLinks = Array.from(sidebar.querySelectorAll('a[href*="/app/"]')).filter(
+      link => !link.closest('#gm-folder-tree-container') && !link.closest('#gm-folder-actions')
+    );
     if (chatLinks.length === 0) return;
 
     // 提取并隐藏原生历史记录
@@ -2000,15 +2028,15 @@
        `;
     });
 
-    // 渲染未分类
+    // 渲染未分类（也可折叠）
     const uncategorizedItems = originalItems.filter(item => !folderData.mappings[item.id]);
     if (uncategorizedItems.length > 0) {
        html += `
-         <div class="gm-folder-group">
-           <div class="gm-folder-header" style="padding: 8px 12px; color: #9aa0a6; font-size: 13px; display: flex; align-items: center;">
-             <span style="margin-right: 8px;">📁</span> 未分类记录 <span style="opacity:0.5; margin-left:6px;">(${uncategorizedItems.length})</span>
+         <div class="gm-folder-group" data-folder-id="__uncategorized__">
+           <div class="gm-folder-header" style="padding: 8px 12px; cursor: pointer; color: #9aa0a6; font-size: 13px; display: flex; align-items: center;">
+             <span style="margin-right: 8px;">${folderData.uncategorizedOpen ? '📂' : '📁'}</span> 未分类记录 <span style="opacity:0.5; margin-left:6px;">(${uncategorizedItems.length})</span>
            </div>
-           <div class="gm-folder-content" style="padding-left: 12px;">
+           <div class="gm-folder-content" style="padding-left: 12px; display: ${folderData.uncategorizedOpen ? 'block' : 'none'};">
              ${uncategorizedItems.map(item => createChatHTML(item)).join('')}
            </div>
          </div>
@@ -2075,8 +2103,16 @@
       header.addEventListener('click', async (e) => {
         const group = e.target.closest('.gm-folder-group');
         const folderId = group.dataset.folderId;
-        if (!folderId) return; // 未分类不可折叠
+        if (!folderId) return;
         
+        // 未分类文件夹特殊处理
+        if (folderId === '__uncategorized__') {
+          folderData.uncategorizedOpen = !folderData.uncategorizedOpen;
+          await saveFolderData();
+          await renderFolderTree();
+          return;
+        }
+
         const folder = folderData.folders.find(f => f.id === folderId);
         if (folder) {
           folder.isOpen = !folder.isOpen;
@@ -2123,6 +2159,8 @@
     if (!isFolderManagementEnabled) {
       const existing = document.getElementById('gm-folder-actions');
       if (existing) existing.remove();
+      const existingTree = document.getElementById('gm-folder-tree-container');
+      if (existingTree) existingTree.remove();
       return;
     }
 
@@ -2131,7 +2169,11 @@
       return;
     }
 
-    const sidebar = document.querySelector('mat-sidenav, nav, [role="navigation"], .sidenav') || document.body;
+    const sidebar = findSidebarElement();
+    if (!sidebar) {
+      console.log('[Gemini Manager] Sidebar element not found. Will retry.');
+      return;
+    }
     const chatLinks = Array.from(sidebar.querySelectorAll('a[href*="/app/"]'));
     console.log('[Gemini Manager] Found chat links in sidebar:', chatLinks.length);
     
@@ -2205,12 +2247,16 @@
     if (!isFolderManagementEnabled || currentSite !== SITE.GEMINI) return;
     if (sidebarObserver) { sidebarObserver.disconnect(); sidebarObserver = null; }
 
-    const sidebar = document.querySelector('mat-sidenav, nav, [role="navigation"], .sidenav') || document.body;
+    const sidebar = findSidebarElement();
+    if (!sidebar) return;
+
     sidebarObserver = new MutationObserver(() => {
-      const links = sidebar.querySelectorAll('a[href*="/app/"]');
+      // 只计算非自己注入的链接
+      const links = Array.from(sidebar.querySelectorAll('a[href*="/app/"]')).filter(
+        l => !l.closest('#gm-folder-tree-container') && !l.closest('#gm-folder-actions')
+      );
       if (links.length !== sidebarLinkCount) {
         sidebarLinkCount = links.length;
-        // 流量控制：等 300ms 再渲染，防止频繁触发
         clearTimeout(sidebarObserver._debounce);
         sidebarObserver._debounce = setTimeout(() => renderFolderTree(), 300);
       }
