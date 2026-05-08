@@ -1928,9 +1928,9 @@
     const bg = item.isActive ? 'rgba(255,255,255,0.1)' : 'transparent';
     const fw = item.isActive ? '600' : '400';
     return `
-      <div class="gm-chat-item" data-id="${item.id}" style="padding: 8px 12px; margin: 2px 0; cursor: pointer; border-radius: 6px; background: ${bg}; color: #e8eaed; font-size: 13px; font-weight: ${fw}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; justify-content: space-between;">
-        <span style="overflow: hidden; text-overflow: ellipsis;">💬 ${item.title}</span>
-        <span class="gm-move-btn" style="font-size: 16px; opacity: 0.5; padding-left: 8px;">⋮</span>
+      <div class="gm-chat-item" data-id="${item.id}" draggable="true" style="padding: 8px 12px; margin: 2px 0; cursor: pointer; border-radius: 6px; background: ${bg}; color: #e8eaed; font-size: 13px; font-weight: ${fw}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; justify-content: space-between;">
+        <span style="overflow: hidden; text-overflow: ellipsis; pointer-events: none;">💬 ${item.title}</span>
+        <span class="gm-move-btn" style="font-size: 16px; opacity: 0.5; padding-left: 8px;" title="移动对话">⋮</span>
       </div>
     `;
   }
@@ -2002,51 +2002,61 @@
 
     treeContainer.innerHTML = html;
 
-    // 绑定原生点击事件：当点击我们自定义的列表时，触发原生链接的点击
+    // 绑定原生点击事件
     treeContainer.querySelectorAll('.gm-chat-item').forEach(el => {
        el.addEventListener('click', (e) => {
-         // 防止点击了移动按钮也触发跳转
          if (e.target.closest('.gm-move-btn')) return;
          e.preventDefault();
          const id = el.dataset.id;
          const original = originalItems.find(item => item.id === id);
          if (original) original.originalEl.click();
        });
+       
+       // === 拖拽开始 ===
+       el.addEventListener('dragstart', (e) => {
+         e.dataTransfer.setData('text/plain', el.dataset.id);
+         el.style.opacity = '0.4';
+       });
+       // === 拖拽结束 ===
+       el.addEventListener('dragend', (e) => {
+         el.style.opacity = '1';
+         treeContainer.querySelectorAll('.gm-folder-header').forEach(h => h.style.background = 'transparent');
+       });
     });
 
-    // 绑定移动文件夹的交互 (简单的 Prompt 版，后续可改成菜单)
-    treeContainer.querySelectorAll('.gm-move-btn').forEach(btn => {
-      btn.addEventListener('click', async (e) => {
+    // 绑定拖拽放置 (Drop) 事件到文件夹头部
+    treeContainer.querySelectorAll('.gm-folder-header').forEach(header => {
+      header.addEventListener('dragover', (e) => {
+        e.preventDefault(); // 允许放置
+        e.dataTransfer.dropEffect = 'move';
+      });
+      header.addEventListener('dragenter', (e) => {
         e.preventDefault();
-        e.stopPropagation();
-        const itemEl = e.target.closest('.gm-chat-item');
-        const chatId = itemEl.dataset.id;
-        
-        let msg = "请选择要把这个对话移动到哪个文件夹：\n\n";
-        msg += "0. [移出文件夹/未分类]\n";
-        folderData.folders.forEach((f, idx) => {
-          msg += `${idx + 1}. ${f.name}\n`;
-        });
-        
-        const choice = prompt(msg);
-        if (choice === null) return;
-        
-        const idx = parseInt(choice) - 1;
-        if (choice === '0') {
-           delete folderData.mappings[chatId];
-        } else if (idx >= 0 && idx < folderData.folders.length) {
-           folderData.mappings[chatId] = folderData.folders[idx].id;
+        header.style.background = 'rgba(255,255,255,0.1)';
+      });
+      header.addEventListener('dragleave', (e) => {
+        header.style.background = 'transparent';
+      });
+      header.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        header.style.background = 'transparent';
+        const chatId = e.dataTransfer.getData('text/plain');
+        if (!chatId) return;
+
+        const group = header.closest('.gm-folder-group');
+        const folderId = group.dataset.folderId; // 如果是未分类，则是 undefined
+
+        if (folderId) {
+          folderData.mappings[chatId] = folderId;
         } else {
-           alert('无效的选择');
-           return;
+          delete folderData.mappings[chatId];
         }
+
         await saveFolderData();
         await renderFolderTree();
       });
-    });
 
-    // 绑定文件夹折叠交互
-    treeContainer.querySelectorAll('.gm-folder-header').forEach(header => {
+      // 绑定文件夹折叠交互
       header.addEventListener('click', async (e) => {
         const group = e.target.closest('.gm-folder-group');
         const folderId = group.dataset.folderId;
@@ -2058,6 +2068,33 @@
           await saveFolderData();
           await renderFolderTree();
         }
+      });
+    });
+
+    // 绑定移动文件夹的交互 (原有的兜底菜单，可以保留或者删掉)
+    treeContainer.querySelectorAll('.gm-move-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const itemEl = e.target.closest('.gm-chat-item');
+        const chatId = itemEl.dataset.id;
+        
+        let msg = "移动对话到：\n\n0. [取消分类]\n";
+        folderData.folders.forEach((f, idx) => msg += `${idx + 1}. ${f.name}\n`);
+        
+        const choice = prompt(msg);
+        if (!choice) return;
+        
+        const idx = parseInt(choice) - 1;
+        if (choice === '0') {
+           delete folderData.mappings[chatId];
+        } else if (idx >= 0 && idx < folderData.folders.length) {
+           folderData.mappings[chatId] = folderData.folders[idx].id;
+        } else {
+           return;
+        }
+        await saveFolderData();
+        await renderFolderTree();
       });
     });
   }
