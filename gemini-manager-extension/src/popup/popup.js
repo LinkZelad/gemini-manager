@@ -1010,12 +1010,6 @@ function renderTurnSelector() {
   updateTurnSelectCount();
 }
 
-function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
-}
-
 function selectAllTurns(selectAll) {
   els.turnSelectorList.querySelectorAll('input[type="checkbox"]').forEach(cb => {
     cb.checked = selectAll;
