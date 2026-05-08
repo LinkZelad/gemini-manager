@@ -829,162 +829,256 @@
 
   // ===== AI Studio Conversation Extraction =====
 
+  const AI_STUDIO_DELAY = 500; // ms to wait after scroll/toggle operations
+
+  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+  /**
+   * Toggle AI Studio's raw output mode on/off.
+   * When raw mode is on, ms-text-chunk contains raw markdown text instead of rendered HTML.
+   * This is critical for complete and accurate content extraction.
+   */
+  async function toggleAIStudioRawMode(enable) {
+    try {
+      // Check current raw mode state
+      const isRawMode = document.body.innerHTML.includes('Show conversation with markdown formatting');
+
+      if ((enable && isRawMode) || (!enable && !isRawMode)) {
+        return; // Already in desired state
+      }
+
+      // Find "View more actions" button
+      const moreActionsBtn = document.querySelector('button[aria-label="View more actions"]');
+      if (!moreActionsBtn) {
+        console.warn('[Gemini Manager] Could not find "View more actions" button');
+        return;
+      }
+
+      // Open menu if needed
+      let rawToggleBtn = document.querySelector('button[aria-label="Toggle viewing raw output"]');
+      if (!rawToggleBtn) {
+        moreActionsBtn.click();
+        await sleep(200);
+        rawToggleBtn = document.querySelector('button[aria-label="Toggle viewing raw output"]');
+      }
+
+      if (!rawToggleBtn) {
+        console.warn('[Gemini Manager] Could not find "Toggle viewing raw output" button');
+        // Close menu
+        moreActionsBtn.click();
+        await sleep(100);
+        return;
+      }
+
+      // Toggle raw mode
+      rawToggleBtn.click();
+      await sleep(enable ? 2000 : AI_STUDIO_DELAY); // Longer delay when enabling (content needs to re-render)
+
+      // Close menu if still open
+      const rawBtnStillVisible = document.querySelector('button[aria-label="Toggle viewing raw output"]');
+      if (rawBtnStillVisible) {
+        moreActionsBtn.click();
+        await sleep(100);
+      }
+
+      console.log(`[Gemini Manager] Raw mode ${enable ? 'enabled' : 'disabled'}`);
+    } catch (err) {
+      console.warn('[Gemini Manager] Failed to toggle raw mode:', err);
+    }
+  }
+
   /**
    * Extract conversation from AI Studio (aistudio.google.com).
    * AI Studio uses Angular components: ms-chat-turn, ms-text-chunk, etc.
+   * This function is ASYNC because it needs to:
+   * 1. Toggle raw output mode for accurate text extraction
+   * 2. Scroll each turn into view to trigger lazy rendering
    */
-  function extractAIStudioConversation() {
-    const doc = document;
-    const chatTurns = doc.querySelectorAll('ms-chat-turn');
+  async function extractAIStudioConversation() {
+    // Step 1: Enable raw mode for accurate markdown extraction
+    const wasRawMode = document.body.innerHTML.includes('Show conversation with markdown formatting');
+    if (!wasRawMode) {
+      await toggleAIStudioRawMode(true);
+    }
 
-    const turns = [];
-    const seenUserTexts = new Set();
+    try {
+      // Step 2: Find all chat turns
+      const chatTurns = document.querySelectorAll('ms-chat-turn');
+      console.log(`[Gemini Manager] Found ${chatTurns.length} chat turns in AI Studio`);
 
-    chatTurns.forEach((chatTurn, index) => {
-      const turnContainer = chatTurn.querySelector('[data-turn-role]');
-      if (!turnContainer) return;
+      const turns = [];
+      const seenUserTexts = new Set();
 
-      const role = turnContainer.getAttribute('data-turn-role');
+      // Step 3: Process each turn (scroll into view first for lazy loading)
+      for (let index = 0; index < chatTurns.length; index++) {
+        const chatTurn = chatTurns[index];
 
-      const turn = {
-        index: index,
-        type: 'unknown',
-        userText: null,
-        userTextHtml: null,
-        thoughtText: null,
-        responseText: null,
-        responseHtml: null,
-        responseMarkdown: null,
-        images: [],
-        userImages: []
-      };
+        // Scroll turn into view to ensure content is rendered
+        chatTurn.scrollIntoView({ behavior: 'instant', block: 'center' });
+        await sleep(AI_STUDIO_DELAY);
 
-      if (role === 'User') {
-        // Extract user text from ms-text-chunk
-        const textChunk = chatTurn.querySelector('ms-text-chunk');
-        const userText = textChunk ? normalizeText(getNodeText(textChunk)) : '';
+        const turnContainer = chatTurn.querySelector('[data-turn-role]');
+        if (!turnContainer) continue;
 
-        if (userText && !seenUserTexts.has(userText)) {
-          seenUserTexts.add(userText);
-          turn.userText = userText;
-          turn.userTextHtml = userText;
-        }
+        const role = turnContainer.getAttribute('data-turn-role');
 
-        // Extract user images — capture ALL img elements (including blob: URLs)
-        const userImgs = chatTurn.querySelectorAll('img');
-        userImgs.forEach(imgEl => {
-          let src = imgEl.getAttribute('src') || '';
-          // Skip SVGs and watermarks
-          if (src.startsWith('data:image/svg') || src.includes('watermark')) return;
-          if (src) {
-            if (!src.startsWith('http') && !src.startsWith('data:') && !src.startsWith('blob:')) {
-              src = src.startsWith('/') ? window.location.origin + src : src;
-            }
-            turn.userImages.push({
-              src: src,
-              alt: imgEl.getAttribute('alt') || '',
-              width: imgEl.getAttribute('width') || '',
-              height: imgEl.getAttribute('height') || ''
-            });
-          }
-        });
+        const turn = {
+          index: index,
+          type: 'unknown',
+          userText: null,
+          userTextHtml: null,
+          thoughtText: null,
+          responseText: null,
+          responseHtml: null,
+          responseMarkdown: null,
+          images: [],
+          userImages: []
+        };
 
-        // Extract file attachments (ms-file-chunk)
-        const fileChunk = chatTurn.querySelector('ms-file-chunk');
-        if (fileChunk) {
-          const nameSpan = fileChunk.querySelector('span');
-          const fileName = nameSpan ? nameSpan.innerText.trim() : 'attachment';
-          if (!turn.userText) {
-            turn.userText = `[附件: ${fileName}]`;
-            turn.userTextHtml = `[附件: ${fileName}]`;
-          } else {
-            turn.userText += `\n[附件: ${fileName}]`;
-            turn.userTextHtml += `\n[附件: ${fileName}]`;
-          }
-        }
+        if (role === 'User') {
+          // In raw mode, ms-text-chunk contains plain text (the user's input)
+          const textChunk = chatTurn.querySelector('ms-text-chunk');
+          const userText = textChunk ? textChunk.innerText.trim() : '';
 
-        if (turn.userText) {
-          turn.type = 'user';
-          turns.push(turn);
-        }
-
-      } else if (role === 'Model') {
-        // Extract reasoning/thinking (in expansion panel)
-        const chevronButton = Array.from(chatTurn.querySelectorAll('span')).find(
-          span => span.textContent.trim() === 'chevron_right'
-        );
-        if (chevronButton) {
-          // Check if reasoning panel is already expanded
-          const expansionPanel = chatTurn.querySelector('.mat-expansion-panel-body ms-text-chunk');
-          if (expansionPanel) {
-            const reasoningText = normalizeText(expansionPanel.textContent);
-            if (reasoningText) {
-              turn.thoughtText = reasoningText;
-            }
-          }
-        }
-
-        // Extract model response text — must EXCLUDE text inside expansion panels (thinking)
-        // Find all ms-text-chunk elements that are NOT inside .mat-expansion-panel-body
-        const allTextChunks = chatTurn.querySelectorAll('ms-text-chunk');
-        let responseTextChunk = null;
-        for (const chunk of allTextChunks) {
-          if (!chunk.closest('.mat-expansion-panel-body') && !chunk.closest('mat-expansion-panel')) {
-            responseTextChunk = chunk;
-            break;
-          }
-        }
-
-        if (responseTextChunk) {
-          const responseText = normalizeText(getNodeText(responseTextChunk));
-          if (responseText) {
-            turn.responseText = responseText;
-            // Try to convert HTML to markdown
-            turn.responseMarkdown = htmlToMarkdown(responseTextChunk);
-            turn.responseHtml = responseTextChunk.innerHTML;
+          if (userText && !seenUserTexts.has(userText)) {
+            seenUserTexts.add(userText);
+            turn.userText = userText;
+            turn.userTextHtml = userText;
           }
 
-          // Extract images from model response, filtering out watermark/UI images
-          const imgs = chatTurn.querySelectorAll('img');
-          imgs.forEach(img => {
-            let src = img.getAttribute('src') || '';
-            // Skip watermark images, SVGs, and tiny icon images
-            if (src.includes('watermark') || src.startsWith('data:image/svg')) return;
+          // Extract user images
+          const userImgs = chatTurn.querySelectorAll('img');
+          userImgs.forEach(imgEl => {
+            let src = imgEl.getAttribute('src') || '';
+            if (src.startsWith('data:image/svg') || src.includes('watermark')) return;
             if (src) {
               if (!src.startsWith('http') && !src.startsWith('data:') && !src.startsWith('blob:')) {
                 src = src.startsWith('/') ? window.location.origin + src : src;
               }
-              turn.images.push({
+              turn.userImages.push({
                 src: src,
-                alt: img.getAttribute('alt') || '',
-                width: img.getAttribute('width') || '',
-                height: img.getAttribute('height') || ''
+                alt: imgEl.getAttribute('alt') || '',
+                width: imgEl.getAttribute('width') || '',
+                height: imgEl.getAttribute('height') || ''
               });
             }
           });
-        }
 
-        if (turn.responseMarkdown || turn.responseText) {
-          turn.type = turn.userText ? 'qa' : 'model';
-          turns.push(turn);
+          // Extract file attachments (ms-file-chunk)
+          const fileChunk = chatTurn.querySelector('ms-file-chunk');
+          if (fileChunk) {
+            const nameSpan = fileChunk.querySelector('span');
+            const fileName = nameSpan ? nameSpan.innerText.trim() : 'attachment';
+            if (!turn.userText) {
+              turn.userText = `[附件: ${fileName}]`;
+              turn.userTextHtml = `[附件: ${fileName}]`;
+            } else {
+              turn.userText += `\n[附件: ${fileName}]`;
+              turn.userTextHtml += `\n[附件: ${fileName}]`;
+            }
+          }
+
+          if (turn.userText) {
+            turn.type = 'user';
+            turns.push(turn);
+          }
+
+        } else if (role === 'Model') {
+          // Extract reasoning/thinking (in expansion panel)
+          // In raw mode, try to expand the thinking panel if it exists
+          const chevronButton = Array.from(chatTurn.querySelectorAll('span')).find(
+            span => span.textContent.trim() === 'chevron_right'
+          );
+          if (chevronButton) {
+            // Click to expand
+            chevronButton.click();
+            await sleep(AI_STUDIO_DELAY);
+
+            const expansionPanel = chatTurn.querySelector('.mat-expansion-panel-body ms-text-chunk');
+            if (expansionPanel) {
+              const reasoningText = expansionPanel.innerText.trim();
+              if (reasoningText) {
+                turn.thoughtText = reasoningText;
+              }
+            }
+
+            // Collapse back
+            chevronButton.click();
+            await sleep(200);
+          }
+
+          // Extract model response text
+          // In raw mode, ms-text-chunk contains the raw markdown text
+          const allTextChunks = chatTurn.querySelectorAll('ms-text-chunk');
+          let responseTextChunk = null;
+          for (const chunk of allTextChunks) {
+            if (!chunk.closest('.mat-expansion-panel-body') && !chunk.closest('mat-expansion-panel')) {
+              responseTextChunk = chunk;
+              break;
+            }
+          }
+
+          if (responseTextChunk) {
+            // In raw mode, innerText gives us the raw markdown directly
+            const rawText = responseTextChunk.innerText.trim();
+            if (rawText) {
+              turn.responseText = rawText;
+              // In raw mode, the text IS markdown already
+              turn.responseMarkdown = rawText;
+              turn.responseHtml = responseTextChunk.innerHTML;
+            }
+
+            // Extract images from model response
+            const imgs = chatTurn.querySelectorAll('img');
+            imgs.forEach(img => {
+              let src = img.getAttribute('src') || '';
+              if (src.includes('watermark') || src.startsWith('data:image/svg')) return;
+              if (src) {
+                if (!src.startsWith('http') && !src.startsWith('data:') && !src.startsWith('blob:')) {
+                  src = src.startsWith('/') ? window.location.origin + src : src;
+                }
+                turn.images.push({
+                  src: src,
+                  alt: img.getAttribute('alt') || '',
+                  width: img.getAttribute('width') || '',
+                  height: img.getAttribute('height') || ''
+                });
+              }
+            });
+          }
+
+          if (turn.responseMarkdown || turn.responseText) {
+            turn.type = turn.userText ? 'qa' : 'model';
+            turns.push(turn);
+          }
         }
       }
-    });
 
-    return {
-      title: getConversationTitle(),
-      url: window.location.href,
-      timestamp: new Date().toISOString(),
-      turns: turns
-    };
+      return {
+        title: getConversationTitle(),
+        url: window.location.href,
+        timestamp: new Date().toISOString(),
+        turns: turns
+      };
+    } finally {
+      // Step 4: Restore raw mode to original state
+      if (!wasRawMode) {
+        await toggleAIStudioRawMode(false);
+      }
+      // Scroll back to bottom
+      const chatContainer = document.querySelector('.chat-turns-container') || document.querySelector('ms-autoscroll-container');
+      if (chatContainer) {
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+      }
+    }
   }
 
   // ===== Gemini Conversation Extraction =====
 
-  function extractCurrentConversation() {
+  async function extractCurrentConversation() {
     // Delegate to site-specific extractor
     if (currentSite === SITE.AISTUDIO) {
-      return extractAIStudioConversation();
+      return await extractAIStudioConversation();
     }
     return extractGeminiConversation();
   }
@@ -1499,12 +1593,14 @@
 
   function handleMessage(request, sender, sendResponse) {
     if (request.action === 'extractConversation') {
-      try {
-        const data = extractCurrentConversation();
-        sendResponse({ success: true, data: data });
-      } catch (err) {
-        sendResponse({ success: false, error: err.message });
-      }
+      (async () => {
+        try {
+          const data = await extractCurrentConversation();
+          sendResponse({ success: true, data: data });
+        } catch (err) {
+          sendResponse({ success: false, error: err.message });
+        }
+      })();
       return true;
     }
 
@@ -1519,9 +1615,10 @@
     }
 
     if (request.action === 'exportMarkdown') {
-      const conv = extractCurrentConversation();
-      processConversationImages(conv).then(() => {
+      (async () => {
         try {
+          const conv = await extractCurrentConversation();
+          await processConversationImages(conv);
           const result = toMarkdown(conv, {
             includeImages: request.includeImages !== false,
             includeThoughts: request.includeThoughts !== false,
@@ -1537,14 +1634,15 @@
         } catch (err) {
           sendResponse({ success: false, error: err.message });
         }
-      });
+      })();
       return true;
     }
 
     if (request.action === 'exportObsidian') {
-      const conv = extractCurrentConversation();
-      processConversationImages(conv).then(async () => {
+      (async () => {
         try {
+          const conv = await extractCurrentConversation();
+          await processConversationImages(conv);
           const result = toObsidianFormat(conv, {
             includeImages: request.includeImages !== false,
             includeThoughts: request.includeThoughts !== false,
@@ -1571,19 +1669,21 @@
         } catch (err) {
           sendResponse({ success: false, error: err.message });
         }
-      });
+      })();
       return true;
     }
 
     if (request.action === 'exportJSON') {
-      try {
-        const conv = extractCurrentConversation();
-        const json = toJSON(conv);
-        const defaultName = `${formatDateTime(conv.timestamp)}_${sanitizeFilename(conv.title)}.json`;
-        sendResponse({ success: true, content: json, title: conv.title, defaultFilename: defaultName });
-      } catch (err) {
-        sendResponse({ success: false, error: err.message });
-      }
+      (async () => {
+        try {
+          const conv = await extractCurrentConversation();
+          const json = toJSON(conv);
+          const defaultName = `${formatDateTime(conv.timestamp)}_${sanitizeFilename(conv.title)}.json`;
+          sendResponse({ success: true, content: json, title: conv.title, defaultFilename: defaultName });
+        } catch (err) {
+          sendResponse({ success: false, error: err.message });
+        }
+      })();
       return true;
     }
 
@@ -1666,7 +1766,7 @@
     btn.title = 'Gemini Manager: 导出当前对话';
     btn.addEventListener('click', async () => {
       try {
-        const conv = extractCurrentConversation();
+        const conv = await extractCurrentConversation();
         const result = toMarkdown(conv);
         const md = result.text;
         const blob = new Blob([md], { type: 'text/markdown' });
