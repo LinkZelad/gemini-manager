@@ -299,7 +299,11 @@ async function fetchImagesAsBase64(imageUrls) {
       continue;
     }
     try {
-      const response = await fetch(url, { credentials: 'include' });
+      // Only include credentials for Google auth URLs (lh3.googleusercontent.com).
+      // Other CDNs (e.g. gstatic.com) return Access-Control-Allow-Origin: *
+      // which is incompatible with credentials: 'include'.
+      const needsAuth = /^https:\/\/lh3\.(googleusercontent|google|ggpht)\.com\//i.test(url);
+      const response = await fetch(url, { credentials: needsAuth ? 'include' : 'omit' });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const blob = await response.blob();
       const dataUrl = await new Promise((resolve, reject) => {

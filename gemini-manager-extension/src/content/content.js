@@ -117,12 +117,16 @@
 
   /**
    * Fetch an image URL using the page's cookies (runs in Gemini page context).
-   * This is essential for lh3.googleusercontent.com URLs which require Google
-   * authentication cookies that only the content script has access to.
+   * Uses credentials: 'include' only for Google auth URLs (lh3.googleusercontent.com);
+   * uses 'omit' for other URLs to avoid CORS wildcard conflicts.
    */
   async function fetchImageInPage(imageUrl) {
     try {
-      const response = await fetch(imageUrl, { credentials: 'include' });
+      // Only include credentials for URLs that need Google auth cookies.
+      // Other CDNs (e.g. gstatic.com) return Access-Control-Allow-Origin: *
+      // which is incompatible with credentials: 'include'.
+      const creds = needsPageContextFetch(imageUrl) ? 'include' : 'omit';
+      const response = await fetch(imageUrl, { credentials: creds });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const blob = await response.blob();
       return new Promise((resolve, reject) => {
@@ -904,22 +908,35 @@
           }
         }
 
-        // Extract model response text
-        const textChunk = chatTurn.querySelector('ms-text-chunk');
-        if (textChunk) {
-          const responseText = normalizeText(getNodeText(textChunk));
+        // Extract model response text — must EXCLUDE text inside expansion panels (thinking)
+        // Find all ms-text-chunk elements that are NOT inside .mat-expansion-panel-body
+        const allTextChunks = chatTurn.querySelectorAll('ms-text-chunk');
+        let responseTextChunk = null;
+        for (const chunk of allTextChunks) {
+          if (!chunk.closest('.mat-expansion-panel-body') && !chunk.closest('mat-expansion-panel')) {
+            responseTextChunk = chunk;
+            break;
+          }
+        }
+
+        if (responseTextChunk) {
+          const responseText = normalizeText(getNodeText(responseTextChunk));
           if (responseText) {
             turn.responseText = responseText;
             // Try to convert HTML to markdown
-            turn.responseMarkdown = htmlToMarkdown(textChunk);
-            turn.responseHtml = textChunk.innerHTML;
+            turn.responseMarkdown = htmlToMarkdown(responseTextChunk);
+            turn.responseHtml = responseTextChunk.innerHTML;
           }
 
-          // Extract images from model response
+          // Extract images from model response, filtering out watermark/UI images
           const imgs = chatTurn.querySelectorAll('img');
           imgs.forEach(img => {
             let src = img.getAttribute('src') || '';
-            if (src && !src.startsWith('data:image/svg') && !img.classList.contains('loaded-image')) {
+            // Skip watermark images and SVGs
+            if (src.includes('watermark') || src.startsWith('data:image/svg')) return;
+            // Skip user-uploaded images (handled separately)
+            if (img.classList.contains('loaded-image')) return;
+            if (src) {
               if (!src.startsWith('http') && !src.startsWith('data:') && !src.startsWith('blob:')) {
                 src = src.startsWith('/') ? window.location.origin + src : src;
               }
