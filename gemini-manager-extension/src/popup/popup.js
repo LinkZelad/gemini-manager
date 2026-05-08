@@ -571,14 +571,26 @@ async function exportMarkdown() {
   setExportFeedback(isAIStudio ? '正在提取 AI Studio 对话（需要较长时间）...' : '正在导出 Markdown...', 10);
   try {
     const directWrite = shouldUseDirectWrite();
+
+    // Pre-verify file system permission BEFORE the long extraction,
+    // while user activation (click gesture) is still valid.
+    let directWritePermissionOk = false;
+    if (directWrite) {
+      try {
+        directWritePermissionOk = await verifyDirectoryPermission(exportDirectoryHandle, true);
+      } catch (e) {
+        console.warn('[Gemini Manager] Pre-verify permission failed:', e);
+      }
+    }
+
     const response = await sendToContent('exportMarkdown', {
-      imageFolder: directWrite ? DIRECT_IMAGE_FOLDER : '',
+      imageFolder: (directWrite && directWritePermissionOk) ? DIRECT_IMAGE_FOLDER : '',
       includeThoughts: settings.includeThoughts !== false
     });
     setExportFeedback('正在准备图片与笔记...', 40);
     const filename = getUserFilename(response.defaultFilename, '.md');
 
-    if (directWrite) {
+    if (directWrite && directWritePermissionOk) {
       const wroteDirectly = await writeObsidianExportToDirectory(response, filename);
       if (wroteDirectly) {
         setExportFeedback(`已完成: ${filename}`, 100);
@@ -615,8 +627,20 @@ async function exportObsidian() {
     // URI mode embeds images as base64; direct-write mode writes image files instead.
     const directWrite = shouldUseDirectWrite();
     const embedImages = shouldEmbedImagesForObsidian();
+
+    // Pre-verify file system permission BEFORE the long extraction,
+    // while user activation (click gesture) is still valid.
+    let directWritePermissionOk = false;
+    if (directWrite) {
+      try {
+        directWritePermissionOk = await verifyDirectoryPermission(exportDirectoryHandle, true);
+      } catch (e) {
+        console.warn('[Gemini Manager] Pre-verify permission failed:', e);
+      }
+    }
+
     const response = await sendToContent('exportObsidian', {
-      imageFolder: directWrite ? DIRECT_IMAGE_FOLDER : '',
+      imageFolder: (directWrite && directWritePermissionOk) ? DIRECT_IMAGE_FOLDER : '',
       embedImages,
       includeThoughts: settings.includeThoughts !== false
     });
@@ -625,10 +649,12 @@ async function exportObsidian() {
     const content = response.content;
     const folder = settings.obsidianFolder ? settings.obsidianFolder + '/' : '';
 
-    const wroteDirectly = await writeObsidianExportToDirectory(response, filename);
-    if (wroteDirectly) {
-      setExportFeedback(`已完成: ${filename}`, 100);
-      return;
+    if (directWrite && directWritePermissionOk) {
+      const wroteDirectly = await writeObsidianExportToDirectory(response, filename);
+      if (wroteDirectly) {
+        setExportFeedback(`已完成: ${filename}`, 100);
+        return;
+      }
     }
 
     if (settings.obsidianUseUri) {
