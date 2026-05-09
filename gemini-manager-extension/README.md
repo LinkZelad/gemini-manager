@@ -1,3 +1,5 @@
+中文 | [English](./README.en.md)
+
 # Gemini Manager
 
 一个 Chrome/Edge 浏览器扩展，用于管理、归档和导出 Google Gemini 和 Google AI Studio 的对话记录（支持导出至 Obsidian、Markdown 或 JSON 格式）。
