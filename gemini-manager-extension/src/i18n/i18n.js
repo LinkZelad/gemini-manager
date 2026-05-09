@@ -102,6 +102,21 @@ const LANGUAGES = {
     'export.cleared': '归档数据已清空',
     'export.browser_not_support': '当前浏览器不支持直接写入目录',
 
+    // Options Page
+    'options.title': 'Gemini Manager 设置',
+    'options.heading': 'Gemini Manager',
+    'options.intro': '选择 Obsidian 中用于保存 Gemini 对话的目录。授权后，扩展会把 Markdown 和图片写入同一个目录。',
+    'options.folder_label': '文件夹路径',
+    'options.folder_placeholder': 'AI对话/Gemini',
+    'options.select_dir': '选择 Obsidian 目录',
+    'options.save_and_close': '保存并退出',
+    'options.loading': '正在加载...',
+    'options.browser_unsupported': '您的浏览器不支持目录访问 API。请使用 Chrome 等支持 File System Access API 的浏览器。',
+    'options.dir_selected': '已选择目录: {name}',
+    'options.dir_not_selected': '未选择目录',
+    'options.error': '发生错误: {msg}',
+    'options.saved': '路径已保存',
+
     // Footer
     'footer.version': 'Gemini Manager v1.0'
   },
@@ -204,6 +219,21 @@ const LANGUAGES = {
     'export.confirm_clear': 'Confirm clearing all archived data?',
     'export.cleared': 'Archived data cleared',
     'export.browser_not_support': 'Browser does not support directory writing',
+
+    // Options Page
+    'options.title': 'Gemini Manager Settings',
+    'options.heading': 'Gemini Manager',
+    'options.intro': 'Select the directory in Obsidian to save Gemini conversations. Once authorized, the extension will write Markdown and images to the same directory.',
+    'options.folder_label': 'Folder Path',
+    'options.folder_placeholder': 'AI Chats/Gemini',
+    'options.select_dir': 'Select Obsidian Directory',
+    'options.save_and_close': 'Save and Close',
+    'options.loading': 'Loading...',
+    'options.browser_unsupported': 'Your browser does not support the Directory Access API. Please use Chrome or another browser that supports the File System Access API.',
+    'options.dir_selected': 'Selected directory: {name}',
+    'options.dir_not_selected': 'No directory selected',
+    'options.error': 'Error: {msg}',
+    'options.saved': 'Path saved',
 
     // Footer
     'footer.version': 'Gemini Manager v1.0'

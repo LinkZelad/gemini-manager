@@ -17,6 +17,10 @@ let exportDirectoryHandle = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
   await loadSettings();
+  if (window.GM_I18N) {
+    window.GM_I18N.setLanguage(settings.language || 'zh');
+    window.GM_I18N.applyI18n();
+  }
   await loadExportDirectoryHandle();
   renderStatus();
 
@@ -42,15 +46,17 @@ function setStatus(message, type = '') {
 }
 
 function renderStatus() {
+  const _t = window.GM_I18N ? window.GM_I18N.t : (k) => k;
+  
   if (!('showDirectoryPicker' in window)) {
-    setStatus('当前浏览器不支持直接写入目录。请使用 Chromium 86+。', 'error');
+    setStatus(_t('options.browser_unsupported'), 'error');
     return;
   }
 
   if (exportDirectoryHandle) {
-    setStatus(`已选择目录: ${exportDirectoryHandle.name}`, 'success');
+    setStatus(_t('options.dir_selected', { name: exportDirectoryHandle.name }), 'success');
   } else {
-    setStatus('未选择目录。请选择 Obsidian Vault 根目录，或直接选择保存 Gemini 对话的目录。');
+    setStatus(_t('options.dir_not_selected'));
   }
 }
 
@@ -108,7 +114,8 @@ async function selectExportDirectory() {
     const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
     const granted = await verifyDirectoryPermission(handle);
     if (!granted) {
-      setStatus('未获得目录写入权限。', 'error');
+      const _t = window.GM_I18N ? window.GM_I18N.t : (k) => k;
+      setStatus(_t('options.error', { msg: 'Permission denied' }), 'error');
       return;
     }
 
@@ -120,7 +127,8 @@ async function selectExportDirectory() {
     renderStatus();
   } catch (err) {
     if (err.name !== 'AbortError') {
-      setStatus('选择目录失败: ' + err.message, 'error');
+      const _t = window.GM_I18N ? window.GM_I18N.t : (k) => k;
+      setStatus(_t('options.error', { msg: err.message }), 'error');
     }
   }
 }
@@ -128,5 +136,9 @@ async function selectExportDirectory() {
 async function saveFolderPath() {
   settings.obsidianFolder = els.folder.value.trim();
   await saveSettings();
-  renderStatus();
+  const _t = window.GM_I18N ? window.GM_I18N.t : (k) => k;
+  setStatus(_t('options.saved'), 'success');
+  setTimeout(() => {
+    window.close();
+  }, 500);
 }

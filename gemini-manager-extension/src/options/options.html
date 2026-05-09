@@ -3,29 +3,30 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Gemini Manager 设置</title>
+  <title data-i18n="options.title">Gemini Manager 设置</title>
   <link rel="stylesheet" href="options.css">
 </head>
 <body>
   <main class="page">
     <section class="panel">
-      <h1>Gemini Manager</h1>
-      <p class="intro">选择 Obsidian 中用于保存 Gemini 对话的目录。授权后，扩展会把 Markdown 和图片写入同一个目录。</p>
+      <h1 data-i18n="options.heading">Gemini Manager</h1>
+      <p class="intro" data-i18n="options.intro">选择 Obsidian 中用于保存 Gemini 对话的目录。授权后，扩展会把 Markdown 和图片写入同一个目录。</p>
 
       <div class="field">
-        <label for="obsidian-folder">文件夹路径</label>
-        <input type="text" id="obsidian-folder" placeholder="AI对话/Gemini">
+        <label for="obsidian-folder" data-i18n="options.folder_label">文件夹路径</label>
+        <input type="text" id="obsidian-folder" data-i18n-placeholder="options.folder_placeholder" placeholder="AI对话/Gemini">
       </div>
 
       <div class="actions">
-        <button class="btn primary" id="btn-select-dir">选择 Obsidian 目录</button>
-        <button class="btn" id="btn-save-folder">保存路径</button>
+        <button class="btn primary" id="btn-select-dir" data-i18n="options.select_dir">选择 Obsidian 目录</button>
+        <button class="btn" id="btn-save-folder" data-i18n="options.save_and_close">保存并退出</button>
       </div>
 
-      <div class="status" id="status">正在加载...</div>
+      <div class="status" id="status" data-i18n="options.loading">正在加载...</div>
     </section>
   </main>
 
+  <script src="../i18n/i18n.js"></script>
   <script src="options.js" type="module"></script>
 </body>
 </html>
