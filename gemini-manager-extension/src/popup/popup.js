@@ -17,7 +17,8 @@ let settings = {
   obsidianAutoFilename: true,
   defaultFormat: 'markdown',
   includeThoughts: true,
-  useSaveDialog: true  // 默认弹出保存对话框
+  useSaveDialog: true,  // 默认弹出保存对话框
+  language: 'zh'
 };
 
 // ===== DOM Elements =====
@@ -54,6 +55,7 @@ const els = {
   btnClearArchived: document.getElementById('btn-clear-archived'),
   btnExportStorage: document.getElementById('btn-export-storage'),
   enableFolderManagement: document.getElementById('enable-folder-management'),
+  languageSelect: document.getElementById('language-select'),
   // Selective export
   btnToggleSelective: document.getElementById('btn-toggle-selective'),
   turnSelectorPanel: document.getElementById('turn-selector-panel'),
@@ -77,15 +79,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   if (isGeminiPage) {
     const siteName = currentTab.url.includes('aistudio.google.com') ? 'AI Studio' : 'Gemini';
-    els.statusBadge.textContent = `已连接 (${siteName})`;
+    els.statusBadge.textContent = `${window.GM_I18N.t('status.connected')} (${siteName})`;
     els.statusBadge.classList.add('online');
     await refreshCurrentConversation();
     await refreshConversationList();
   } else {
-    els.statusBadge.textContent = '未在 Gemini/AI Studio 页面';
+    els.statusBadge.textContent = window.GM_I18N.t('status.not_supported');
     els.statusBadge.classList.add('offline');
-    els.convTitle.textContent = '请在 Gemini 或 AI Studio 页面使用';
-    els.conversationList.innerHTML = '<div class="empty-state">请打开 gemini.google.com 或 aistudio.google.com 后重试</div>';
+    els.convTitle.textContent = window.GM_I18N.t('status.not_supported');
+    els.conversationList.innerHTML = `<div class="empty-state">${window.GM_I18N.t('status.not_supported')}</div>`;
   }
 });
 
@@ -114,6 +116,11 @@ function applySettingsToUI() {
   els.includeThoughts.checked = settings.includeThoughts !== false;
   if (els.enableFolderManagement) {
     els.enableFolderManagement.checked = settings.enableFolderManagement || false;
+  }
+  if (els.languageSelect) {
+    els.languageSelect.value = settings.language || 'zh';
+    window.GM_I18N.setCurrentLang(settings.language || 'zh');
+    window.GM_I18N.applyI18n();
   }
   syncExportModeControls();
 }
@@ -161,14 +168,19 @@ async function saveSettings() {
     defaultFormat: els.exportFormat.value,
     includeThoughts: els.includeThoughts.checked,
     useSaveDialog: settings.useSaveDialog !== false,
-    enableFolderManagement: els.enableFolderManagement ? els.enableFolderManagement.checked : false
+    enableFolderManagement: els.enableFolderManagement ? els.enableFolderManagement.checked : false,
+    language: els.languageSelect ? els.languageSelect.value : 'zh'
   };
 
   try {
     await chrome.storage.sync.set({ gm_settings: settings });
-    showToast('设置已保存', 'success');
+    // Apply language immediately
+    if (window.GM_I18N) {
+      window.GM_I18N.setLanguage(settings.language);
+    }
+    showToast(window.GM_I18N ? window.GM_I18N.t('export.saved') : '设置已保存', 'success');
   } catch (err) {
-    showToast('保存失败: ' + err.message, 'error');
+    showToast((window.GM_I18N ? window.GM_I18N.t('export.save_failed') : '保存失败') + ': ' + err.message, 'error');
   }
 }
 
@@ -969,32 +981,35 @@ async function toggleSelectiveExport() {
   // Open panel and fetch turn previews
   btn.classList.add('active');
   panel.hidden = false;
-  els.turnSelectorList.innerHTML = '<div class="empty-state">正在加载对话轮次...</div>';
+  const _t = window.GM_I18N ? window.GM_I18N.t : (k) => k;
+  els.turnSelectorList.innerHTML = `<div class="empty-state">${_t('selective.loading_turns')}</div>`;
 
   try {
     const isAIStudio = currentTab && currentTab.url && currentTab.url.includes('aistudio.google.com');
     if (isAIStudio) {
-      els.turnSelectorList.innerHTML = '<div class="empty-state">正在扫描 AI Studio 对话（可能需要一些时间）...</div>';
+      els.turnSelectorList.innerHTML = `<div class="empty-state">${_t('selective.loading_aistudio')}</div>`;
     }
     const response = await sendToContent('extractTurnPreviews');
     selectiveTurnPreviews = response.data.turns || [];
     renderTurnSelector();
   } catch (err) {
-    els.turnSelectorList.innerHTML = `<div class="empty-state">加载失败: ${err.message}</div>`;
+    els.turnSelectorList.innerHTML = `<div class="empty-state">${_t('selective.load_failed')}: ${err.message}</div>`;
   }
 }
 
 function renderTurnSelector() {
+  const _t = window.GM_I18N ? window.GM_I18N.t : (k) => k;
+
   if (!selectiveTurnPreviews.length) {
-    els.turnSelectorList.innerHTML = '<div class="empty-state">没有可选轮次</div>';
+    els.turnSelectorList.innerHTML = `<div class="empty-state">${_t('selective.no_turns')}</div>`;
     updateTurnSelectCount();
     return;
   }
 
   els.turnSelectorList.innerHTML = selectiveTurnPreviews.map((turn, idx) => {
     const roleClass = turn.role === 'user' ? 'user' : 'model';
-    const roleLabel = turn.role === 'user' ? '👤 用户' : '🤖 模型';
-    const previewText = escapeHtml(turn.preview || '(无内容)');
+    const roleLabel = turn.role === 'user' ? _t('selective.role_user') : _t('selective.role_model');
+    const previewText = escapeHtml(turn.preview || _t('selective.no_content'));
     const imgBadge = turn.hasImages ? ' 🖼️' : '';
     return `
       <label class="turn-item" data-index="${turn.index}">
@@ -1023,9 +1038,10 @@ function selectAllTurns(selectAll) {
 }
 
 function updateTurnSelectCount() {
+  const _t = window.GM_I18N ? window.GM_I18N.t : (k) => k;
   const checkboxes = els.turnSelectorList.querySelectorAll('input[type="checkbox"]');
   const checked = els.turnSelectorList.querySelectorAll('input[type="checkbox"]:checked');
-  els.turnSelectCount.textContent = `已选 ${checked.length}/${checkboxes.length} 轮`;
+  els.turnSelectCount.textContent = _t('selective.selected_count', { checked: checked.length, total: checkboxes.length });
 
   // Disable export buttons if nothing selected
   const hasSelection = checked.length > 0;
