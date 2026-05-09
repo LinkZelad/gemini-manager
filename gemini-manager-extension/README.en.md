@@ -17,6 +17,7 @@ A Chrome/Edge browser extension for managing, archiving, and exporting Google Ge
   - Obsidian Format - Includes exclusive YAML frontmatter, adapted to Obsidian usage habits.
   - JSON (`.json`) - Structured data, convenient for programmers to process further.
 - **Powerful Image Saving**: Automatically parses and downloads model-generated images and user-uploaded images from conversations.
+- **Multi-language UI**: The extension popup and options page support one-click Chinese/English switching, with language preference automatically saved.
 - **Three Obsidian Integration Methods**:
   1. **Direct Directory Write (Recommended)**: Uses the browser's native File System Access API to directly write to your chosen local folder and image subfolders, providing the smoothest experience.
   2. **Obsidian URI**: Creates notes by invoking Obsidian through a URL Scheme, with images automatically converted to Base64 embedding.
@@ -42,7 +43,7 @@ A Chrome/Edge browser extension for managing, archiving, and exporting Google Ge
 3. Operate in the pop-up panel:
    - **Current Conversation**: You can perform actions such as "Export All", "Selective Export", "Export as JSON", etc.
    - **Conversation List**: Browse sidebar historical conversations, you can search, archive, or perform "Export All Sessions".
-   - **Settings**: Configure various preferences for Obsidian export.
+   - **Settings**: Configure various preferences for Obsidian export and interface language.
 
 ### Selective Export
 
@@ -105,6 +106,8 @@ gemini-manager-extension/
 │   ├── content/
 │   │   ├── content.js         # Content Script - Core DOM parsing, extraction, and conversion
 │   │   └── content.css        # Content Script Styles
+│   ├── i18n/
+│   │   └── i18n.js            # Internationalization translations and language switching
 │   ├── popup/
 │   │   ├── popup.html         # Popup UI Panel
 │   │   ├── popup.css          # Popup Styles (including selective export panel, etc.)
