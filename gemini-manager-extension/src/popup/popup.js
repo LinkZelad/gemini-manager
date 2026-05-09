@@ -193,13 +193,14 @@ const DIRECT_IMAGE_FOLDER = 'Images';
 
 function updateExportDirStatus() {
   if (!els.exportDirStatus) return;
+  const _t = window.GM_I18N ? window.GM_I18N.t : (k) => k;
   if (!('showDirectoryPicker' in window)) {
-    els.exportDirStatus.textContent = '当前浏览器不支持直接写入目录';
+    els.exportDirStatus.textContent = _t('export.browser_not_support');
     return;
   }
   els.exportDirStatus.textContent = exportDirectoryHandle
-    ? `已选择: ${exportDirectoryHandle.name}`
-    : '未选择目录';
+    ? _t('settings.selected_dir', { name: exportDirectoryHandle.name })
+    : _t('settings.dir_not_selected');
 }
 
 function openFsDb() {
@@ -1155,6 +1156,28 @@ function setupEventListeners() {
   els.filterInput.addEventListener('input', renderConversationList);
   els.filterStatus.addEventListener('change', renderConversationList);
   els.useDirectObsidianWrite.addEventListener('change', syncExportModeControls);
+
+  if (els.languageSelect) {
+    els.languageSelect.addEventListener('change', () => {
+      const newLang = els.languageSelect.value;
+      if (window.GM_I18N) {
+        window.GM_I18N.setLanguage(newLang);
+        // Refresh statuses that use dynamic strings
+        updateExportDirStatus();
+        updateTurnSelectCount();
+        if (currentTab && isGeminiPage) {
+          const siteName = currentTab.url.includes('aistudio.google.com') ? 'AI Studio' : 'Gemini';
+          els.statusBadge.textContent = `${window.GM_I18N.t('status.connected')} (${siteName})`;
+        } else {
+          els.statusBadge.textContent = window.GM_I18N.t('status.not_supported');
+          els.convTitle.textContent = window.GM_I18N.t('status.not_supported');
+          if (conversationList.length === 0) {
+            els.conversationList.innerHTML = `<div class="empty-state">${window.GM_I18N.t('status.not_supported')}</div>`;
+          }
+        }
+      }
+    });
+  }
 
   // Selective export
   els.btnToggleSelective.addEventListener('click', toggleSelectiveExport);
